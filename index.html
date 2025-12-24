@@ -3,10 +3,98 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Mark6 Demo</title>
+  <title>六合彩 Mark Six｜示範站</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "PingFang HK", "Noto Sans TC", Arial, sans-serif; margin: 24px; line-height: 1.6; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    .row { display:flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .ball { width: 42px; height: 42px; border-radius: 999px; border: 1px solid #999; display:flex; align-items:center; justify-content:center; font-weight: 700; }
+    .muted { color: #666; font-size: 14px; }
+    .error { color: #b00020; }
+    .loading { opacity: 0.8; }
+    code { background:#f5f5f5; padding: 2px 6px; border-radius: 6px; }
+  </style>
 </head>
 <body>
-  <h1>Mark6 示範站</h1>
-  <p>如果你見到呢頁，代表 mark6.imhandso.me 已成功指向外部平台。</p>
+  <h1>六合彩 Mark Six｜示範站</h1>
+  <p class="muted">此站以 <code>data/latest.json</code> 作資料來源（最快 MVP 版本）。</p>
+
+  <div class="card">
+    <h2>最新一期攪珠結果</h2>
+    <div id="latest" class="loading">讀取中…</div>
+  </div>
+
+  <div class="card">
+    <h2>下期攪珠</h2>
+    <div id="next" class="loading">讀取中…</div>
+  </div>
+
+  <div class="card">
+    <h2>聲明</h2>
+    <div id="disclaimer" class="muted">—</div>
+  </div>
+
+  <script>
+    function pad2(n){ return String(n).padStart(2, "0"); }
+
+    function renderLatest(data){
+      const el = document.getElementById("latest");
+      const d = data.draw || {};
+      const nums = Array.isArray(d.numbers) ? d.numbers : [];
+      const special = d.special;
+
+      const numbersHtml = nums.map(n => `<div class="ball">${pad2(n)}</div>`).join("");
+      const specialHtml = (typeof special === "number")
+        ? `<div class="row" style="margin-top:10px;"><div class="muted">特別號：</div><div class="ball">${pad2(special)}</div></div>`
+        : "";
+
+      el.classList.remove("loading");
+      el.innerHTML = `
+        <div class="muted">期數：${d.drawNo || "—"}　｜　日期：${d.drawDate || "—"}</div>
+        <div class="row" style="margin-top:10px;">${numbersHtml || "<span class='muted'>未有號碼</span>"}</div>
+        ${specialHtml}
+        <div class="muted" style="margin-top:10px;">更新時間：${data.updatedAt || "—"}</div>
+      `;
+    }
+
+    function renderNext(data){
+      const el = document.getElementById("next");
+      const n = data.nextDraw || {};
+      el.classList.remove("loading");
+      el.innerHTML = `
+        <div>下期日期：<strong>${n.drawDate || "—"}</strong></div>
+        ${n.note ? `<div class="muted">${n.note}</div>` : ""}
+      `;
+    }
+
+    function renderDisclaimer(data){
+      const el = document.getElementById("disclaimer");
+      el.textContent = data.disclaimer || "本頁資料僅供參考，以官方公佈為準。";
+    }
+
+    async function load(){
+      const latestEl = document.getElementById("latest");
+      const nextEl = document.getElementById("next");
+
+      try{
+        // 加 cache-bust，避免 CDN/瀏覽器舊 cache
+        const url = "/data/latest.json?v=" + Date.now();
+        const res = await fetch(url, { cache: "no-store" });
+        if(!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+
+        renderLatest(data);
+        renderNext(data);
+        renderDisclaimer(data);
+      }catch(err){
+        latestEl.classList.remove("loading");
+        nextEl.classList.remove("loading");
+        latestEl.innerHTML = `<div class="error">讀取資料失敗：${err.message}</div>`;
+        nextEl.innerHTML = `<div class="error">請稍後再試。</div>`;
+      }
+    }
+
+    load();
+  </script>
 </body>
 </html>
