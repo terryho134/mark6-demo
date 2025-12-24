@@ -29,72 +29,175 @@
     <div id="next" class="loading">讀取中…</div>
   </div>
 
+    <div class="card">
+    <h2>最近攪珠（最新 20 期）</h2>
+    <div id="history" class="loading">讀取中…</div>
+    <div class="muted" style="margin-top:10px;">資料來源：<code>data/draws.json</code></div>
+  </div>
+
+  <div class="card">
+    <h2>冷熱號統計（按最近 20 期計）</h2>
+    <div id="stats" class="loading">讀取中…</div>
+  </div>
+
   <div class="card">
     <h2>聲明</h2>
     <div id="disclaimer" class="muted">—</div>
   </div>
 
   <script>
-    function pad2(n){ return String(n).padStart(2, "0"); }
+  function pad2(n){ return String(n).padStart(2, "0"); }
 
-    function renderLatest(data){
-      const el = document.getElementById("latest");
-      const d = data.draw || {};
-      const nums = Array.isArray(d.numbers) ? d.numbers : [];
-      const special = d.special;
+  function renderLatest(data){
+    const el = document.getElementById("latest");
+    const d = data.draw || {};
+    const nums = Array.isArray(d.numbers) ? d.numbers : [];
+    const special = d.special;
 
-      const numbersHtml = nums.map(n => `<div class="ball">${pad2(n)}</div>`).join("");
-      const specialHtml = (typeof special === "number")
-        ? `<div class="row" style="margin-top:10px;"><div class="muted">特別號：</div><div class="ball">${pad2(special)}</div></div>`
+    const numbersHtml = nums.map(n => `<div class="ball">${pad2(n)}</div>`).join("");
+    const specialHtml = (typeof special === "number")
+      ? `<div class="row" style="margin-top:10px;"><div class="muted">特別號：</div><div class="ball">${pad2(special)}</div></div>`
+      : "";
+
+    el.classList.remove("loading");
+    el.innerHTML = `
+      <div class="muted">期數：${d.drawNo || "—"}　｜　日期：${d.drawDate || "—"}</div>
+      <div class="row" style="margin-top:10px;">${numbersHtml || "<span class='muted'>未有號碼</span>"}</div>
+      ${specialHtml}
+      <div class="muted" style="margin-top:10px;">更新時間：${data.updatedAt || "—"}</div>
+    `;
+  }
+
+  function renderNext(data){
+    const el = document.getElementById("next");
+    const n = data.nextDraw || {};
+    el.classList.remove("loading");
+    el.innerHTML = `
+      <div>下期日期：<strong>${n.drawDate || "—"}</strong></div>
+      ${n.note ? `<div class="muted">${n.note}</div>` : ""}
+    `;
+  }
+
+  function renderDisclaimer(data){
+    const el = document.getElementById("disclaimer");
+    el.textContent = data.disclaimer || "本頁資料僅供參考，以官方公佈為準。";
+  }
+
+  function renderHistory(drawsData){
+    const el = document.getElementById("history");
+    const draws = Array.isArray(drawsData.draws) ? drawsData.draws : [];
+    el.classList.remove("loading");
+
+    if(draws.length === 0){
+      el.innerHTML = `<div class="muted">未有歷史資料</div>`;
+      return;
+    }
+
+    const rows = draws.slice(0, 20).map(d => {
+      const balls = (d.numbers || []).map(n => `<span class="ball" style="width:34px;height:34px;">${pad2(n)}</span>`).join("");
+      const sp = (typeof d.special === "number")
+        ? `<span class="muted" style="margin:0 6px;">特：</span><span class="ball" style="width:34px;height:34px;">${pad2(d.special)}</span>`
         : "";
-
-      el.classList.remove("loading");
-      el.innerHTML = `
-        <div class="muted">期數：${d.drawNo || "—"}　｜　日期：${d.drawDate || "—"}</div>
-        <div class="row" style="margin-top:10px;">${numbersHtml || "<span class='muted'>未有號碼</span>"}</div>
-        ${specialHtml}
-        <div class="muted" style="margin-top:10px;">更新時間：${data.updatedAt || "—"}</div>
+      return `
+        <div class="card" style="border-radius:10px; padding:12px; margin:10px 0;">
+          <div class="muted">期數：${d.drawNo || "—"}　｜　日期：${d.drawDate || "—"}</div>
+          <div class="row" style="margin-top:8px;">${balls}${sp}</div>
+        </div>
       `;
+    }).join("");
+
+    el.innerHTML = rows;
+  }
+
+  function renderStats(drawsData){
+    const el = document.getElementById("stats");
+    const draws = Array.isArray(drawsData.draws) ? drawsData.draws : [];
+    el.classList.remove("loading");
+
+    const recent = draws.slice(0, 20);
+    if(recent.length === 0){
+      el.innerHTML = `<div class="muted">未有統計資料</div>`;
+      return;
     }
 
-    function renderNext(data){
-      const el = document.getElementById("next");
-      const n = data.nextDraw || {};
-      el.classList.remove("loading");
-      el.innerHTML = `
-        <div>下期日期：<strong>${n.drawDate || "—"}</strong></div>
-        ${n.note ? `<div class="muted">${n.note}</div>` : ""}
-      `;
-    }
-
-    function renderDisclaimer(data){
-      const el = document.getElementById("disclaimer");
-      el.textContent = data.disclaimer || "本頁資料僅供參考，以官方公佈為準。";
-    }
-
-    async function load(){
-      const latestEl = document.getElementById("latest");
-      const nextEl = document.getElementById("next");
-
-      try{
-        // 加 cache-bust，避免 CDN/瀏覽器舊 cache
-        const url = "/data/latest.json?v=" + Date.now();
-        const res = await fetch(url, { cache: "no-store" });
-        if(!res.ok) throw new Error("HTTP " + res.status);
-        const data = await res.json();
-
-        renderLatest(data);
-        renderNext(data);
-        renderDisclaimer(data);
-      }catch(err){
-        latestEl.classList.remove("loading");
-        nextEl.classList.remove("loading");
-        latestEl.innerHTML = `<div class="error">讀取資料失敗：${err.message}</div>`;
-        nextEl.innerHTML = `<div class="error">請稍後再試。</div>`;
+    // 計次數（只計正選 6 個號碼；你想連特別號都計可以之後加）
+    const freq = new Map();
+    for(const d of recent){
+      const nums = Array.isArray(d.numbers) ? d.numbers : [];
+      for(const n of nums){
+        freq.set(n, (freq.get(n) || 0) + 1);
       }
     }
 
-    load();
-  </script>
+    // 生成排序
+    const all = Array.from({length: 49}, (_, i) => i + 1).map(n => ({ n, c: freq.get(n) || 0 }));
+    const hot = [...all].sort((a,b) => b.c - a.c || a.n - b.n).slice(0, 10);
+    const cold = [...all].sort((a,b) => a.c - b.c || a.n - b.n).slice(0, 10);
+
+    function listHtml(arr){
+      return `
+        <div class="row">
+          ${arr.map(x => `
+            <div style="text-align:center;">
+              <div class="ball" title="出現次數：${x.c}">${pad2(x.n)}</div>
+              <div class="muted">×${x.c}</div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    el.innerHTML = `
+      <div class="muted">統計範圍：最近 ${recent.length} 期（只計 6 個正選號碼）</div>
+      <h3 style="margin:12px 0 6px;">熱號 Top 10</h3>
+      ${listHtml(hot)}
+      <h3 style="margin:16px 0 6px;">冷號 Top 10</h3>
+      ${listHtml(cold)}
+    `;
+  }
+
+  async function load(){
+    const latestEl = document.getElementById("latest");
+    const nextEl = document.getElementById("next");
+    const historyEl = document.getElementById("history");
+    const statsEl = document.getElementById("stats");
+
+    try{
+      // 讀最新一期
+      const latestUrl = "/data/latest.json?v=" + Date.now();
+      const latestRes = await fetch(latestUrl, { cache: "no-store" });
+      if(!latestRes.ok) throw new Error("latest.json HTTP " + latestRes.status);
+      const latestData = await latestRes.json();
+
+      renderLatest(latestData);
+      renderNext(latestData);
+      renderDisclaimer(latestData);
+    }catch(err){
+      latestEl.classList.remove("loading");
+      nextEl.classList.remove("loading");
+      latestEl.innerHTML = `<div class="error">讀取最新一期失敗：${err.message}</div>`;
+      nextEl.innerHTML = `<div class="error">請稍後再試。</div>`;
+    }
+
+    try{
+      // 讀歷史資料 + 統計
+      const drawsUrl = "/data/draws.json?v=" + Date.now();
+      const drawsRes = await fetch(drawsUrl, { cache: "no-store" });
+      if(!drawsRes.ok) throw new Error("draws.json HTTP " + drawsRes.status);
+      const drawsData = await drawsRes.json();
+
+      renderHistory(drawsData);
+      renderStats(drawsData);
+    }catch(err){
+      historyEl.classList.remove("loading");
+      statsEl.classList.remove("loading");
+      historyEl.innerHTML = `<div class="error">讀取歷史資料失敗：${err.message}</div>`;
+      statsEl.innerHTML = `<div class="error">請稍後再試。</div>`;
+    }
+  }
+
+  load();
+</script>
+
 </body>
 </html>
