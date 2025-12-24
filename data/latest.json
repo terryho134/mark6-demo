@@ -1,0 +1,15 @@
+{
+  "source": "manual",
+  "updatedAt": "2025-12-24T10:00:00+08:00",
+  "draw": {
+    "drawNo": "000/2025",
+    "drawDate": "2025-12-23",
+    "numbers": [1, 7, 12, 23, 36, 44],
+    "special": 8
+  },
+  "nextDraw": {
+    "drawDate": "2025-12-26",
+    "note": "示範資料：之後可改為真實下期攪珠日期"
+  },
+  "disclaimer": "本頁資料僅供參考，以官方公佈為準。"
+}
