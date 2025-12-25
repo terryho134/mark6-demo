@@ -29,7 +29,7 @@
     <div id="next" class="loading">讀取中…</div>
   </div>
 
-    <div class="card">
+  <div class="card">
     <h2>最近攪珠（最新 20 期）</h2>
     <div id="history" class="loading">讀取中…</div>
     <div class="muted" style="margin-top:10px;">資料來源：<code>data/draws.json</code></div>
@@ -41,12 +41,33 @@
   </div>
 
   <div class="card">
+    <h2>幸運號碼抽選</h2>
+
+    <div class="row" style="margin: 10px 0;">
+      <label class="muted">模式：</label>
+      <select id="pickMode">
+        <option value="random">隨機</option>
+        <option value="hot">偏熱（按最近20期加權）</option>
+        <option value="cold">偏冷（按最近20期加權）</option>
+      </select>
+      <button id="btnPick">抽一組</button>
+      <button id="btnCopy">複製分享連結</button>
+    </div>
+
+    <div id="pickResult" class="row" style="margin-top: 12px;"></div>
+    <div id="pickHint" class="muted" style="margin-top: 10px;"></div>
+  </div>
+
+
+  <div class="card">
     <h2>聲明</h2>
     <div id="disclaimer" class="muted">—</div>
   </div>
 
   <script>
   function pad2(n){ return String(n).padStart(2, "0"); }
+
+  let recentFreq = null; // Map<number, count>，由 draws.json 計出（最近20期）
 
   function renderLatest(data){
     const el = document.getElementById("latest");
@@ -129,6 +150,8 @@
       }
     }
 
+    recentFreq = freq;
+
     // 生成排序
     const all = Array.from({length: 49}, (_, i) => i + 1).map(n => ({ n, c: freq.get(n) || 0 }));
     const hot = [...all].sort((a,b) => b.c - a.c || a.n - b.n).slice(0, 10);
@@ -155,6 +178,101 @@
       ${listHtml(cold)}
     `;
   }
+
+    function weightedPickOne(weightsMap, chosenSet){
+  // weightsMap: Map<number, weight>
+  // chosenSet: Set<number> (避免重覆)
+  let total = 0;
+  const items = [];
+  for(let n=1; n<=49; n++){
+    if(chosenSet.has(n)) continue;
+    const w = weightsMap.get(n) || 1;
+    total += w;
+    items.push([n, w]);
+  }
+  let r = Math.random() * total;
+  for(const [n,w] of items){
+    r -= w;
+    if(r <= 0) return n;
+  }
+  return items.length ? items[items.length-1][0] : 1;
+}
+
+function buildWeights(mode){
+  // mode: random / hot / cold
+  const w = new Map();
+  for(let n=1; n<=49; n++){
+    const c = (recentFreq && recentFreq.get(n)) ? recentFreq.get(n) : 0;
+
+    if(mode === "hot"){
+      // 出現越多，權重越高（+1 避免 0）
+      w.set(n, c + 1);
+    }else if(mode === "cold"){
+      // 出現越少，權重越高
+      // 以最近20期 0~? 次為例：用 (max - c + 1)
+      // max 取 20（理論上最多20次，但實際會低很多）
+      w.set(n, (20 - c) + 1);
+    }else{
+      // random
+      w.set(n, 1);
+    }
+  }
+  return w;
+}
+
+function pickSix(mode){
+  const weights = buildWeights(mode);
+  const chosen = new Set();
+  while(chosen.size < 6){
+    const n = weightedPickOne(weights, chosen);
+    chosen.add(n);
+  }
+  return Array.from(chosen).sort((a,b)=>a-b);
+}
+
+function renderPick(nums){
+  const el = document.getElementById("pickResult");
+  el.innerHTML = nums.map(n => `<div class="ball">${pad2(n)}</div>`).join("");
+}
+
+function setPickHint(text){
+  const el = document.getElementById("pickHint");
+  el.textContent = text || "";
+}
+
+function updateUrlWithPick(nums){
+  const pick = nums.map(pad2).join("-");
+  const url = new URL(window.location.href);
+  url.searchParams.set("pick", pick);
+  window.history.replaceState({}, "", url.toString());
+  return url.toString();
+}
+
+function readPickFromUrl(){
+  const url = new URL(window.location.href);
+  const pick = url.searchParams.get("pick");
+  if(!pick) return null;
+  const parts = pick.split("-").map(s => parseInt(s, 10)).filter(n => Number.isFinite(n));
+  if(parts.length !== 6) return null;
+  // 基本驗證：1-49、不可重覆
+  const set = new Set(parts);
+  if(set.size !== 6) return null;
+  for(const n of set){
+    if(n < 1 || n > 49) return null;
+  }
+  return Array.from(set).sort((a,b)=>a-b);
+}
+
+async function copyShareLink(){
+  const link = window.location.href;
+  try{
+    await navigator.clipboard.writeText(link);
+    setPickHint("已複製分享連結（可貼去 WhatsApp/Telegram）。");
+  }catch(e){
+    setPickHint("複製失敗：你可以手動複製瀏覽器網址列。");
+  }
+}
+
 
   async function load(){
     const latestEl = document.getElementById("latest");
@@ -195,6 +313,32 @@
       statsEl.innerHTML = `<div class="error">請稍後再試。</div>`;
     }
   }
+
+  // 綁定抽號碼按鈕
+  const btnPick = document.getElementById("btnPick");
+  const btnCopy = document.getElementById("btnCopy");
+  const modeSel = document.getElementById("pickMode");
+  
+  // 先嘗試從網址讀取 pick
+  const existing = readPickFromUrl();
+  if(existing){
+    renderPick(existing);
+    setPickHint("已從分享連結載入此組號碼。");
+  }
+  
+  // 點擊抽選
+  btnPick?.addEventListener("click", () => {
+    const mode = modeSel?.value || "random";
+    const nums = pickSix(mode);
+    renderPick(nums);
+    const link = updateUrlWithPick(nums);
+    setPickHint(`已更新網址，可直接分享：${link}`);
+  });
+  
+  // 複製分享連結
+  btnCopy?.addEventListener("click", () => {
+    copyShareLink();
+  });
 
   load();
 </script>
