@@ -11,7 +11,9 @@
     input, button { padding: 8px 10px; }
     .muted { color:#666; font-size: 14px; }
     .error { color:#b00020; }
+    .ok { color:#0a7a0a; }
     code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+    input[readonly] { background:#fafafa; }
   </style>
 </head>
 <body>
@@ -25,23 +27,50 @@
       <button id="saveKey">記住密碼</button>
     </div>
 
-    <div class="row" style="margin-top:12px;">
+    <hr style="margin:14px 0;border:none;border-top:1px solid #eee;">
+
+    <h3 style="margin:0 0 8px;">輸入今期攪珠結果</h3>
+
+    <div class="row">
       <label>期數</label>
-      <input id="drawNo" placeholder="123/2025" />
-      <label>日期</label>
+      <input id="drawNo" placeholder="例如：123/2025" />
+      <span class="muted" id="prefillHint"></span>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <label>攪珠日期</label>
       <input id="drawDate" type="date" />
     </div>
 
-    <div class="row" style="margin-top:12px;">
+    <div class="row" style="margin-top:10px;">
       <label>6 個號碼</label>
       <input id="nums" placeholder="例如：1 7 12 23 36 44" style="min-width: 320px;" />
       <label>特別號</label>
       <input id="special" type="number" min="1" max="49" style="width:90px;" />
     </div>
 
-    <div class="row" style="margin-top:12px;">
-      <label>下期日期（可選）</label>
+    <hr style="margin:14px 0;border:none;border-top:1px solid #eee;">
+
+    <h3 style="margin:0 0 8px;">同時更新下期資料</h3>
+
+    <div class="row">
+      <label>下期攪珠日期</label>
       <input id="nextDrawDate" type="date" />
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <label>下期期數（自動）</label>
+      <input id="nextDrawNo" readonly placeholder="會自動計算" />
+      <span class="muted">同一年：+1；新一年：<code>001/新年份</code></span>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <label>估計頭獎基金（百萬位）</label>
+      <input id="nextJackpotM" type="number" min="0" step="1" style="width:120px;" placeholder="例如 22" />
+      <span class="muted" id="jackpotHint"></span>
+    </div>
+
+    <div class="row" style="margin-top:14px;">
       <button id="submit">提交更新</button>
     </div>
 
@@ -54,28 +83,139 @@
     const keyEl = document.getElementById("key");
     const msgEl = document.getElementById("msg");
 
+    const drawNoEl = document.getElementById("drawNo");
+    const drawDateEl = document.getElementById("drawDate");
+    const nextDrawDateEl = document.getElementById("nextDrawDate");
+    const nextDrawNoEl = document.getElementById("nextDrawNo");
+    const nextJackpotMEl = document.getElementById("nextJackpotM");
+
+    const prefillHintEl = document.getElementById("prefillHint");
+    const jackpotHintEl = document.getElementById("jackpotHint");
+
     // load saved key
     const saved = localStorage.getItem("ADMIN_KEY");
     if(saved) keyEl.value = saved;
 
     document.getElementById("saveKey").addEventListener("click", () => {
       localStorage.setItem("ADMIN_KEY", keyEl.value || "");
-      msgEl.textContent = "已記住密碼（只儲存在你部電腦瀏覽器）。";
+      msgEl.innerHTML = `<span class="ok">已記住密碼（只儲存在你部電腦瀏覽器）。</span>`;
     });
 
     function parseNums(s){
       return (s || "").trim().split(/[\s,，]+/).filter(Boolean).map(x => parseInt(x,10));
     }
 
+    function parseDrawNo(s){
+      const m = String(s || "").trim().match(/^(\d+)\s*\/\s*(\d{4})$/);
+      if(!m) return null;
+      return { seq: parseInt(m[1],10), year: parseInt(m[2],10) };
+    }
+
+    function formatDrawNo(seq, year){
+      const s = String(seq).padStart(3, "0");
+      return `${s}/${year}`;
+    }
+
+    // 計算：根據「今期 drawNo」+「下期日期 year」推算下期期數
+    function computeNextDrawNo(){
+      const cur = parseDrawNo(drawNoEl.value);
+      const nd = nextDrawDateEl.value;
+      if(!cur || !nd) { nextDrawNoEl.value = ""; return; }
+      const nextYear = parseInt(nd.slice(0,4),10);
+      if(!Number.isFinite(nextYear)) { nextDrawNoEl.value = ""; return; }
+
+      if(nextYear === cur.year){
+        nextDrawNoEl.value = formatDrawNo(cur.seq + 1, nextYear);
+      }else{
+        nextDrawNoEl.value = formatDrawNo(1, nextYear); // 新一年 -> 001/新年份
+      }
+    }
+
+    // 預填：由 DB 取最新一期，再推算「你下一期要輸入」的 drawNo
+    let lastDraw = null;
+    let drawNoTouched = false;
+
+    drawNoEl.addEventListener("input", () => {
+      drawNoTouched = true;
+      computeNextDrawNo();
+    });
+
+    drawDateEl.addEventListener("change", () => {
+      // 如果 admin 未手動改期數，根據選擇的「今期攪珠日期年份」自動預填
+      if(!lastDraw || drawNoTouched) return;
+      const y = drawDateEl.value ? parseInt(drawDateEl.value.slice(0,4),10) : null;
+      const last = parseDrawNo(lastDraw.drawNo);
+      if(!y || !last) return;
+
+      if(y === last.year){
+        drawNoEl.value = formatDrawNo(last.seq + 1, y);
+      }else{
+        drawNoEl.value = formatDrawNo(1, y);
+      }
+      prefillHintEl.textContent = `(已根據 DB 最新一期自動預填)`;
+      computeNextDrawNo();
+    });
+
+    nextDrawDateEl.addEventListener("change", computeNextDrawNo);
+
+    nextJackpotMEl.addEventListener("input", () => {
+      const m = parseInt(nextJackpotMEl.value, 10);
+      if(Number.isFinite(m)){
+        jackpotHintEl.textContent = `= 約 HK$ ${(m*1000000).toLocaleString("en-US")}`;
+      }else{
+        jackpotHintEl.textContent = "";
+      }
+    });
+
+    async function prefillFromDB(){
+      try{
+        const res = await fetch("/api/latest?v=" + Date.now(), { cache: "no-store" });
+        if(!res.ok) return;
+        const data = await res.json();
+        if(!data?.draw?.drawNo) return;
+
+        lastDraw = data.draw;
+
+        // 只在 drawNo 空白時預填（避免覆蓋你手動輸入）
+        if(!drawNoEl.value){
+          const last = parseDrawNo(lastDraw.drawNo);
+          const today = new Date();
+          const y = today.getFullYear();
+
+          if(last && y === last.year){
+            drawNoEl.value = formatDrawNo(last.seq + 1, y);
+          }else{
+            drawNoEl.value = formatDrawNo(1, y);
+          }
+          prefillHintEl.textContent = `(已根據 DB 最新一期自動預填；如跨年請改攪珠日期以自動修正)`;
+          computeNextDrawNo();
+        }
+
+        // 順便預填已存的下期資料（可選）
+        if(data?.nextDraw?.drawDate && !nextDrawDateEl.value) nextDrawDateEl.value = data.nextDraw.drawDate;
+        if(data?.nextDraw?.jackpotMillion !== null && data?.nextDraw?.jackpotMillion !== undefined && !nextJackpotMEl.value){
+          nextJackpotMEl.value = data.nextDraw.jackpotMillion;
+          nextJackpotMEl.dispatchEvent(new Event("input"));
+        }
+        computeNextDrawNo();
+      }catch(e){
+        // ignore
+      }
+    }
+
     document.getElementById("submit").addEventListener("click", async () => {
       msgEl.textContent = "提交中…";
 
       const payload = {
-        drawNo: document.getElementById("drawNo").value.trim(),
-        drawDate: document.getElementById("drawDate").value,
+        drawNo: drawNoEl.value.trim(),
+        drawDate: drawDateEl.value,
         numbers: parseNums(document.getElementById("nums").value),
         special: parseInt(document.getElementById("special").value, 10),
-        nextDrawDate: document.getElementById("nextDrawDate").value || null
+
+        // 下期資料
+        nextDrawDate: nextDrawDateEl.value || null,
+        nextDrawNo: nextDrawNoEl.value || null,
+        nextJackpotM: nextJackpotMEl.value ? parseInt(nextJackpotMEl.value, 10) : null
       };
 
       try{
@@ -92,11 +232,13 @@
           msgEl.innerHTML = `<span class="error">失敗：${data.error || ("HTTP " + res.status)}</span>`;
           return;
         }
-        msgEl.textContent = "成功！返回首頁刷新即可見到更新。";
+        msgEl.innerHTML = `<span class="ok">成功！刷新首頁即可見到更新。</span>`;
       }catch(e){
         msgEl.innerHTML = `<span class="error">提交失敗：${e.message}</span>`;
       }
     });
+
+    prefillFromDB();
   </script>
 </body>
 </html>
