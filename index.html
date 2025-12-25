@@ -120,18 +120,12 @@
   
     if(!drawNo && !drawDate && jackpotM === ""){
       nextEl.innerHTML = `
-        <div class="card">
-          <h3>下期攪珠</h3>
-          <p class="muted">暫未設定下期資料（請到管理頁輸入）。</p>
-        </div>
+        <p class="muted">暫未設定下期資料（請到管理頁輸入）。</p>
       `;
       return;
     }
   
     nextEl.innerHTML = `
-      <div class="card">
-        <h3>下期攪珠</h3>
-  
         <div style="margin-top:8px;">
           <div><strong>期數：</strong>${drawNo || "—"}</div>
           <div><strong>日期：</strong>${drawDate ? formatYMDToHK(drawDate) : "—"}</div>
@@ -150,7 +144,6 @@
         </div>
   
         <p class="muted" style="margin-top:10px;">以官方公佈為準</p>
-      </div>
     `;
   }
 
