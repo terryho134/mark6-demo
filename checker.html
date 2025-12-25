@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>中獎核對器｜Mark6</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "PingFang HK", "Noto Sans TC", Arial, sans-serif; margin: 24px; line-height: 1.55; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:16px; margin:12px 0; }
+    .muted { color:#666; font-size:14px; }
+    .error { color:#b00020; }
+    .ok { color:#0a7a0a; }
+    input, select, button { padding:8px 10px; }
+    .grid { display:grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap:6px; }
+    .nbtn { padding:8px 0; border:1px solid #ddd; border-radius:10px; background:#fff; cursor:pointer; }
+    .nbtn.on { background:#111; color:#fff; border-color:#111; }
+    .nbtn.bank { background:#0b57d0; color:#fff; border-color:#0b57d0; }
+    .nbtn.leg { background:#111; color:#fff; border-color:#111; }
+    code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+    hr { border:none; border-top:1px solid #eee; margin:14px 0; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:13px; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <h1>中獎核對器</h1>
+  <p class="muted">支援：單式／複式／膽拖。頭/二/三獎派彩屬浮動，本頁只顯示「中獎份數」與固定獎金（四至七獎）。</p>
+
+  <div class="card">
+    <h3 style="margin-top:0;">1) 選擇玩法</h3>
+    <div class="row">
+      <label><input type="radio" name="type" value="single" checked> 單式</label>
+      <label><input type="radio" name="type" value="multiple"> 複式</label>
+      <label><input type="radio" name="type" value="banker"> 膽拖</label>
+    </div>
+
+    <hr>
+
+    <h3 style="margin-top:0;">2) 選擇/輸入號碼</h3>
+    <p class="muted" id="ruleHint"></p>
+
+    <div class="row">
+      <button id="clear">清除</button>
+      <span class="pill" id="chancesPill">份數：—</span>
+      <span class="pill" id="stakePill">投注額：—</span>
+      <label style="margin-left:auto;">
+        半注（$5）
+        <input id="half" type="checkbox">
+      </label>
+    </div>
+
+    <div style="margin-top:10px;">
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <div class="muted">已選內容（可貼入/修改）：</div>
+      <input id="input" style="width:100%;" placeholder="單式/複式：以空格分隔；膽拖：膽(空格) > 腳(空格)" />
+      <div class="muted" style="margin-top:6px;">
+        顯示格式：單式/複式 <code>1 7 12 23 36 44</code>；膽拖 <code>1 7 > 12 23 36 44 49</code>
+      </div>
+      <div id="inputErr" class="error" style="margin-top:6px;"></div>
+    </div>
+
+    <hr>
+
+    <h3 style="margin-top:0;">3) 選填攪珠日期或期數</h3>
+    <div class="row">
+      <label>攪珠日期</label>
+      <input id="drawDate" type="date" />
+
+      <span class="muted">或</span>
+
+      <label>期數</label>
+      <select id="year"></select>
+      <input id="seq" type="number" min="1" max="200" placeholder="例如 18" style="width:110px;">
+      <span class="muted">→</span>
+      <input id="drawNo" readonly placeholder="YY/XXX" style="width:100px;">
+      <button id="clearDraw">清除期數/日期</button>
+    </div>
+    <div class="muted">如同時填日期及期數，本頁會以 <strong>期數</strong> 優先。</div>
+
+    <hr>
+
+    <h3 style="margin-top:0;">4) 核對</h3>
+    <div class="row">
+      <button id="check">核對</button>
+      <span id="status" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none;">
+    <h3 style="margin-top:0;">結果</h3>
+    <div id="mainResult"></div>
+
+    <div id="recentBlock" style="margin-top:14px;"></div>
+  </div>
+
+  <p><a href="/">返回首頁</a></p>
+
+<script>
+  const gridEl = document.getElementById("grid");
+  const inputEl = document.getElementById("input");
+  const inputErrEl = document.getElementById("inputErr");
+  const ruleHintEl = document.getElementById("ruleHint");
+  const chancesPill = document.getElementById("chancesPill");
+  const stakePill = document.getElementById("stakePill");
+  const halfEl = document.getElementById("half");
+
+  const drawDateEl = document.getElementById("drawDate");
+  const yearEl = document.getElementById("year");
+  const seqEl = document.getElementById("seq");
+  const drawNoEl = document.getElementById("drawNo");
+
+  const statusEl = document.getElementById("status");
+  const resultCard = document.getElementById("resultCard");
+  const mainResultEl = document.getElementById("mainResult");
+  const recentBlockEl = document.getElementById("recentBlock");
+
+  const typeEls = Array.from(document.querySelectorAll('input[name="type"]'));
+
+  // state
+  let type = "single";
+  let picks = new Set();
+  let bankers = new Set();
+  let legs = new Set();
+
+  function pad2(x){ return String(x).padStart(2,"0"); }
+  function pad3(x){ return String(x).padStart(3,"0"); }
+  function yyFromYear(y){ return pad2(Number(y)%100); }
+
+  function buildDrawNoFromYearSeq(){
+    const y = yearEl.value;
+    const seq = parseInt(seqEl.value,10);
+    if(!y || !Number.isFinite(seq) || seq<=0) { drawNoEl.value=""; return; }
+    drawNoEl.value = `${yyFromYear(y)}/${pad3(seq)}`;
+  }
+
+  // years dropdown
+  (function initYears(){
+    const nowY = new Date().getFullYear();
+    for(let y=2002; y<=nowY; y++){
+      const opt=document.createElement("option");
+      opt.value=String(y);
+      opt.textContent=String(y);
+      yearEl.appendChild(opt);
+    }
+    yearEl.value=String(nowY);
+  })();
+
+  yearEl.addEventListener("change", buildDrawNoFromYearSeq);
+  seqEl.addEventListener("input", buildDrawNoFromYearSeq);
+
+  document.getElementById("clearDraw").addEventListener("click", ()=>{
+    drawDateEl.value="";
+    seqEl.value="";
+    drawNoEl.value="";
+  });
+
+  // grid buttons 1..49
+  function makeGrid(){
+    gridEl.innerHTML="";
+    for(let i=1;i<=49;i++){
+      const b=document.createElement("button");
+      b.type="button";
+      b.className="nbtn";
+      b.textContent=String(i).padStart(2,"0");
+      b.dataset.n=String(i);
+      b.addEventListener("click", ()=>toggleNumber(i));
+      gridEl.appendChild(b);
+    }
+  }
+  makeGrid();
+
+  function setType(newType){
+    type=newType;
+    picks=new Set(); bankers=new Set(); legs=new Set();
+    inputEl.value="";
+    inputErrEl.textContent="";
+    updateHint();
+    renderGrid();
+    updateChancesStake();
+  }
+
+  function updateHint(){
+    if(type==="single") ruleHintEl.textContent="單式：必須選 6 個號碼。";
+    if(type==="multiple") ruleHintEl.textContent="複式：最少 7 個號碼。";
+    if(type==="banker") ruleHintEl.textContent="膽拖：先點「膽」(最多 5 個)，再點「腳」。總數需 ≥7。";
+  }
+
+  typeEls.forEach(r=>{
+    r.addEventListener("change", ()=>{
+      if(r.checked) setType(r.value);
+    });
+  });
+
+  function toggleNumber(n){
+    if(type==="single" || type==="multiple"){
+      if(picks.has(n)) picks.delete(n);
+      else picks.add(n);
+      syncInputFromState();
+      renderGrid();
+      updateChancesStake();
+      return;
+    }
+
+    // banker mode: click cycle => off -> banker -> leg -> off
+    if(bankers.has(n)){
+      bankers.delete(n);
+      legs.add(n);
+    } else if(legs.has(n)){
+      legs.delete(n);
+    } else {
+      // new: add as banker if bankers <5, else as leg
+      if(bankers.size < 5) bankers.add(n);
+      else legs.add(n);
+    }
+    // prevent overlap
+    for(const x of bankers) if(legs.has(x)) legs.delete(x);
+
+    syncInputFromState();
+    renderGrid();
+    updateChancesStake();
+  }
+
+  function renderGrid(){
+    const btns = gridEl.querySelectorAll(".nbtn");
+    btns.forEach(b=>{
+      const n = parseInt(b.dataset.n,10);
+      b.classList.remove("on","bank","leg");
+      if(type==="single" || type==="multiple"){
+        if(picks.has(n)) b.classList.add("on");
+      } else {
+        if(bankers.has(n)) b.classList.add("bank");
+        else if(legs.has(n)) b.classList.add("leg");
+      }
+    });
+  }
+
+  function syncInputFromState(){
+    if(type==="single" || type==="multiple"){
+      const arr = Array.from(picks).sort((a,b)=>a-b);
+      inputEl.value = arr.join(" ");
+      return;
+    }
+    const b = Array.from(bankers).sort((a,b)=>a-b).join(" ");
+    const l = Array.from(legs).sort((a,b)=>a-b).join(" ");
+    inputEl.value = (b || l) ? `${b} > ${l}`.trim() : "";
+  }
+
+  function parseInputToState(){
+    const raw = (inputEl.value || "").trim();
+    inputErrEl.textContent="";
+    if(!raw){
+      if(type==="single"||type==="multiple") picks=new Set();
+      else { bankers=new Set(); legs=new Set(); }
+      return true;
+    }
+
+    const numsFromPart = (s)=> s.trim().split(/[\s,，]+/).filter(Boolean).map(x=>parseInt(x,10)).filter(n=>Number.isFinite(n));
+
+    if(type==="banker"){
+      const parts = raw.split(">");
+      const left = parts[0] ?? "";
+      const right = parts[1] ?? "";
+      const b = numsFromPart(left);
+      const l = numsFromPart(right);
+
+      const bset = new Set(b);
+      const lset = new Set(l);
+      // remove overlaps from legs
+      for(const x of bset) if(lset.has(x)) lset.delete(x);
+
+      bankers = new Set(Array.from(bset).filter(n=>n>=1 && n<=49));
+      legs = new Set(Array.from(lset).filter(n=>n>=1 && n<=49));
+      return validateAndShow(false);
+    } else {
+      const arr = numsFromPart(raw).filter(n=>n>=1 && n<=49);
+      picks = new Set(arr);
+      return validateAndShow(false);
+    }
+  }
+
+  function choose(n,k){
+    if(k<0||n<0||k>n) return 0;
+    k=Math.min(k,n-k);
+    let r=1;
+    for(let i=1;i<=k;i++) r=(r*(n-(k-i)))/i;
+    return Math.round(r);
+  }
+
+  function validateAndShow(showError=true){
+    const half = halfEl.checked;
+    const unitStake = half ? 5 : 10;
+
+    if(type==="single"){
+      if(picks.size!==6){
+        if(showError) inputErrEl.textContent="單式需要剛好 6 個號碼。";
+        updateChancesStake(0, unitStake);
+        return false;
+      }
+      updateChancesStake(1, unitStake);
+      return true;
+    }
+
+    if(type==="multiple"){
+      if(picks.size<7){
+        if(showError) inputErrEl.textContent="複式需要最少 7 個號碼。";
+        updateChancesStake(0, unitStake);
+        return false;
+      }
+      const chances = choose(picks.size,6);
+      updateChancesStake(chances, unitStake);
+      return true;
+    }
+
+    // banker
+    if(bankers.size<1 || bankers.size>5){
+      if(showError) inputErrEl.textContent="膽拖：膽需要 1–5 個。";
+      updateChancesStake(0, unitStake);
+      return false;
+    }
+    if(bankers.size + legs.size < 7){
+      if(showError) inputErrEl.textContent="膽拖：總數需 ≥ 7（膽 + 腳）。";
+      updateChancesStake(0, unitStake);
+      return false;
+    }
+    const t = 6 - bankers.size;
+    if(legs.size < t){
+      if(showError) inputErrEl.textContent=`膽拖：腳不足以補足 6 個號碼（需要至少 ${t} 個腳）。`;
+      updateChancesStake(0, unitStake);
+      return false;
+    }
+    const chances = choose(legs.size, t);
+    updateChancesStake(chances, unitStake);
+    return true;
+  }
+
+  function updateChancesStake(chances=null, unitStake=null){
+    const half = halfEl.checked;
+    const u = unitStake ?? (half ? 5 : 10);
+
+    let c = chances;
+    if(c===null){
+      if(type==="single") c = (picks.size===6) ? 1 : 0;
+      else if(type==="multiple") c = (picks.size>=7) ? choose(picks.size,6) : 0;
+      else {
+        const t = 6 - bankers.size;
+        c = (bankers.size>=1 && bankers.size<=5 && legs.size>=t) ? choose(legs.size,t) : 0;
+      }
+    }
+
+    chancesPill.textContent = `份數：${c ? c.toLocaleString("en-US") : "—"}`;
+    stakePill.textContent = `投注額：${c ? "HK$ " + (c*u).toLocaleString("en-US") : "—"}`;
+  }
+
+  document.getElementById("clear").addEventListener("click", ()=>{
+    picks=new Set(); bankers=new Set(); legs=new Set();
+    inputEl.value="";
+    inputErrEl.textContent="";
+    renderGrid();
+    updateChancesStake();
+  });
+
+  inputEl.addEventListener("input", ()=>{
+    parseInputToState();
+    renderGrid();
+    updateChancesStake();
+  });
+
+  halfEl.addEventListener("change", ()=>{
+    updateChancesStake();
+    // if already showing results, re-run check quickly
+    if(resultCard.style.display !== "none"){
+      runCheck();
+    }
+  });
+
+  function ticketPayload(){
+    const half = halfEl.checked;
+    if(type==="single" || type==="multiple"){
+      return { type, half, picks: Array.from(picks).sort((a,b)=>a-b) };
+    }
+    return {
+      type,
+      half,
+      bankers: Array.from(bankers).sort((a,b)=>a-b),
+      legs: Array.from(legs).sort((a,b)=>a-b),
+    };
+  }
+
+  function buildQuery(){
+    const drawNo = drawNoEl.value.trim();
+    const drawDate = drawDateEl.value;
+
+    // drawNo priority if exists
+    if(drawNo) return { drawNo };
+    if(drawDate) return { drawDate };
+    return {};
+  }
+
+  function fmtYMD(ymd){
+    if(!ymd) return "";
+    const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m) return ymd;
+    return `${m[1]}年${m[2]}月${m[3]}日`;
+  }
+
+  function renderMain(main){
+    const d = main.draw;
+    const t = main.ticket;
+    const r = main.result;
+
+    const fixed = r.fixedAmount;
+    const lines = [];
+
+    lines.push(`<div><strong>攪珠：</strong>${d.drawNo}（${fmtYMD(d.drawDate)}）</div>`);
+    lines.push(`<div class="muted">正選：${d.numbers.join(" ")}　特別號：${String(d.extra).padStart(2,"0")}</div>`);
+
+    lines.push(`<div style="margin-top:8px;"><strong>你的彩票：</strong>${t.type}｜份數 ${t.chances.toLocaleString("en-US")}｜每份 HK$${t.unitStake}｜投注額 HK$ ${t.totalStake.toLocaleString("en-US")}</div>`);
+
+    if(r.summary.length===0){
+      lines.push(`<div style="margin-top:10px;"><strong>結果：</strong>未中獎</div>`);
+      return lines.join("");
+    }
+
+    const summaryText = r.summary.map(x=>`${x.name} × ${x.units.toLocaleString("en-US")}`).join("，");
+    lines.push(`<div style="margin-top:10px;"><strong>中獎：</strong>${summaryText}</div>`);
+
+    // Fixed prizes detail
+    const fixedParts = [];
+    if(main.result.units.div4>0) fixedParts.push(`四獎 HK$${(main.result.units.div4*9600*(t.unitStake/10)).toLocaleString("en-US")}`);
+    if(main.result.units.div5>0) fixedParts.push(`五獎 HK$${(main.result.units.div5*640*(t.unitStake/10)).toLocaleString("en-US")}`);
+    if(main.result.units.div6>0) fixedParts.push(`六獎 HK$${(main.result.units.div6*320*(t.unitStake/10)).toLocaleString("en-US")}`);
+    if(main.result.units.div7>0) fixedParts.push(`七獎 HK$${(main.result.units.div7*40*(t.unitStake/10)).toLocaleString("en-US")}`);
+
+    if(fixed.totalFixed>0){
+      lines.push(`<div style="margin-top:6px;"><strong>固定獎金（四至七獎）：</strong>HK$ ${fixed.totalFixed.toLocaleString("en-US")}</div>`);
+      if(fixedParts.length) lines.push(`<div class="muted">${fixedParts.join("｜")}</div>`);
+    }
+
+    if(r.topPrizeNote){
+      lines.push(`<div class="muted" style="margin-top:6px;">${r.topPrizeNote}</div>`);
+    }
+
+    return lines.join("");
+  }
+
+  function renderRecent(wins){
+    if(!wins || wins.length===0){
+      return `<h4 style="margin:0 0 8px;">近 60 日</h4><div class="muted">近 60 日未有中獎紀錄。</div>`;
+    }
+    const items = wins.map(w=>{
+      const s = w.summary.map(x=>`${x.name}×${x.units}`).join("，");
+      const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
+      const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
+      return `<li><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</li>`;
+    }).join("");
+    return `<h4 style="margin:0 0 8px;">近 60 日（只顯示有中獎）</h4><ol>${items}</ol>`;
+  }
+
+  async function runCheck(){
+    inputErrEl.textContent="";
+    const ok = validateAndShow(true);
+    if(!ok) return;
+
+    statusEl.textContent="核對中…";
+    resultCard.style.display="none";
+
+    const payload = Object.assign({}, ticketPayload(), buildQuery());
+
+    try{
+      const res = await fetch("/api/check", {
+        method:"POST",
+        headers: { "content-type":"application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if(!res.ok || !data.ok){
+        statusEl.textContent="";
+        inputErrEl.textContent = data.error || ("HTTP " + res.status);
+        return;
+      }
+
+      statusEl.textContent="";
+      resultCard.style.display="block";
+      mainResultEl.innerHTML = renderMain(data.main);
+
+      // only show recent block if user didn't specify drawNo/date
+      const q = data.query || {};
+      if(!q.drawNo && !q.drawDate){
+        recentBlockEl.innerHTML = renderRecent(data.recentWins || []);
+      }else{
+        recentBlockEl.innerHTML = "";
+      }
+    }catch(e){
+      statusEl.textContent="";
+      inputErrEl.textContent = "核對失敗：" + e.message;
+    }
+  }
+
+  document.getElementById("check").addEventListener("click", runCheck);
+
+  // init
+  updateHint();
+  updateChancesStake();
+</script>
+</body>
+</html>
