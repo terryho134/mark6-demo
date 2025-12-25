@@ -69,13 +69,22 @@ export async function onRequest({ request, env }) {
     : null; // 百萬位，例如 22
 
   if (!drawNo) return json(400, { ok: false, error: "drawNo required" });
+  
+  if (!/^\d{2}\/\d{3}$/.test(drawNo)) {
+    return json(400, { ok: false, error: "drawNo must be like 25/018" });
+  }
+
   if (!isYMD(drawDate)) return json(400, { ok: false, error: "drawDate must be YYYY-MM-DD" });
 
   const err = validate(nums, special);
   if (err) return json(400, { ok: false, error: err });
 
   if (nextDrawDate && !isYMD(nextDrawDate)) return json(400, { ok: false, error: "nextDrawDate must be YYYY-MM-DD" });
-  if (nextDrawNo && !/^\d{3}\/\d{4}$/.test(nextDrawNo)) return json(400, { ok: false, error: "nextDrawNo must be like 001/2026" });
+  
+  if (nextDrawNo && !/^\d{2}\/\d{3}$/.test(nextDrawNo)) {
+    return json(400, { ok: false, error: "nextDrawNo must be like 25/018" });
+  }
+
   if (nextJackpotM !== null && (!Number.isFinite(nextJackpotM) || nextJackpotM < 0)) {
     return json(400, { ok: false, error: "nextJackpotM must be a non-negative integer (millions)" });
   }
