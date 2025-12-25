@@ -331,19 +331,31 @@ async function copyShareLink(){
 }
 
 
+  async function fetchJsonWithFallback(primaryUrl, fallbackUrl){
+  // primaryUrl / fallbackUrl 都會加 cache-bust
+    async function tryFetch(url){
+      const res = await fetch(url + (url.includes("?") ? "&" : "?") + "v=" + Date.now(), { cache: "no-store" });
+      if(!res.ok) throw new Error(url + " HTTP " + res.status);
+      return await res.json();
+    }
+  
+    try{
+      return await tryFetch(primaryUrl);
+    }catch(primaryErr){
+      if(!fallbackUrl) throw primaryErr;
+      return await tryFetch(fallbackUrl);
+    }
+  }
+  
   async function load(){
     const latestEl = document.getElementById("latest");
     const nextEl = document.getElementById("next");
     const historyEl = document.getElementById("history");
     const statsEl = document.getElementById("stats");
-
+  
     try{
-      // 讀最新一期
-      const latestUrl = "/data/latest.json?v=" + Date.now();
-      const latestRes = await fetch(latestUrl, { cache: "no-store" });
-      if(!latestRes.ok) throw new Error("latest.json HTTP " + latestRes.status);
-      const latestData = await latestRes.json();
-
+      // 先用 API，失敗就 fallback 去 data/latest.json
+      const latestData = await fetchJsonWithFallback("/api/latest", "/data/latest.json");
       renderLatest(latestData);
       renderNext(latestData);
       renderDisclaimer(latestData);
@@ -353,16 +365,17 @@ async function copyShareLink(){
       latestEl.innerHTML = `<div class="error">讀取最新一期失敗：${err.message}</div>`;
       nextEl.innerHTML = `<div class="error">請稍後再試。</div>`;
     }
-
+  
     try{
-      // 讀歷史資料 + 統計
-      const drawsUrl = "/data/draws.json?v=" + Date.now();
-      const drawsRes = await fetch(drawsUrl, { cache: "no-store" });
-      if(!drawsRes.ok) throw new Error("draws.json HTTP " + drawsRes.status);
-      const drawsData = await drawsRes.json();
-
-      renderHistory(drawsData);
-      renderStats(drawsData);
+      // 先用 API recent，失敗就 fallback 去 data/draws.json
+      const recentData = await fetchJsonWithFallback("/api/recent?limit=20", "/data/draws.json");
+  
+      // recentData.draws 結構同 draws.json 幾乎一樣：{ draws: [...] }
+      renderHistory(recentData);
+      renderStats(recentData);
+  
+      // 告訴抽號碼模組：頻率可用了（如果你有偏冷/偏熱）
+      // （renderStats 裡面你已經做了 recentFreq = freq，所以這裡不用再做）
     }catch(err){
       historyEl.classList.remove("loading");
       statsEl.classList.remove("loading");
@@ -370,6 +383,9 @@ async function copyShareLink(){
       statsEl.innerHTML = `<div class="error">請稍後再試。</div>`;
     }
   }
+  
+  load();
+
 
   // 綁定抽號碼按鈕
   const btnPick = document.getElementById("btnPick");
