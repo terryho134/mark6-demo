@@ -40,7 +40,7 @@
     <div id="stats" class="loading">讀取中…</div>
   </div>
 
-  <div class="card">
+    <div class="card">
     <h2>幸運號碼抽選</h2>
 
     <div class="row" style="margin: 10px 0;">
@@ -50,13 +50,24 @@
         <option value="hot">偏熱（按最近20期加權）</option>
         <option value="cold">偏冷（按最近20期加權）</option>
       </select>
-      <button id="btnPick">抽一組</button>
-      <button id="btnCopy">複製分享連結</button>
+
+      <button id="btnPick">抽 1 組</button>
+      <button id="btnPick5">抽 5 組</button>
+      <button id="btnPick10">抽 10 組</button>
+
+      <button id="btnCopy">複製分享連結（1 組）</button>
+      <button id="btnCopyList">複製全部號碼（多組）</button>
     </div>
 
+    <div class="muted">單組結果（可用分享連結）：</div>
     <div id="pickResult" class="row" style="margin-top: 12px;"></div>
+
+    <div class="muted" style="margin-top: 14px;">多組結果：</div>
+    <div id="pickList" style="margin-top: 10px;"></div>
+
     <div id="pickHint" class="muted" style="margin-top: 10px;"></div>
   </div>
+
 
 
   <div class="card">
@@ -235,6 +246,52 @@ function renderPick(nums){
   el.innerHTML = nums.map(n => `<div class="ball">${pad2(n)}</div>`).join("");
 }
 
+    function pickMany(mode, count){
+  const out = [];
+  for(let i=0; i<count; i++){
+    out.push(pickSix(mode));
+  }
+  return out;
+}
+
+function renderPickList(list){
+  const el = document.getElementById("pickList");
+  if(!el) return;
+
+  if(!Array.isArray(list) || list.length === 0){
+    el.innerHTML = `<div class="muted">—</div>`;
+    return;
+  }
+
+  el.innerHTML = list.map((nums, idx) => {
+    const balls = nums.map(n => `<span class="ball" style="width:34px;height:34px;">${pad2(n)}</span>`).join("");
+    return `
+      <div class="card" style="border-radius:10px; padding:12px; margin:10px 0;">
+        <div class="muted">第 ${idx + 1} 組</div>
+        <div class="row" style="margin-top:8px;">${balls}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function formatPickListText(list){
+  // 方便複製：01 07 12 23 36 44（每行一組）
+  if(!Array.isArray(list) || list.length === 0) return "";
+  return list
+    .map(nums => nums.map(pad2).join(" "))
+    .join("\n");
+}
+
+async function copyText(text){
+  try{
+    await navigator.clipboard.writeText(text);
+    return true;
+  }catch(e){
+    return false;
+  }
+}
+
+
 function setPickHint(text){
   const el = document.getElementById("pickHint");
   el.textContent = text || "";
@@ -318,6 +375,37 @@ async function copyShareLink(){
   const btnPick = document.getElementById("btnPick");
   const btnCopy = document.getElementById("btnCopy");
   const modeSel = document.getElementById("pickMode");
+
+  const btnPick5 = document.getElementById("btnPick5");
+  const btnPick10 = document.getElementById("btnPick10");
+  const btnCopyList = document.getElementById("btnCopyList");
+  
+  let lastPickList = []; // 記住最近一次多組結果，方便複製
+  
+  btnPick5?.addEventListener("click", () => {
+    const mode = modeSel?.value || "random";
+    lastPickList = pickMany(mode, 5);
+    renderPickList(lastPickList);
+    setPickHint("已產生 5 組號碼，可按「複製全部號碼（多組）」貼去訊息。");
+  });
+  
+  btnPick10?.addEventListener("click", () => {
+    const mode = modeSel?.value || "random";
+    lastPickList = pickMany(mode, 10);
+    renderPickList(lastPickList);
+    setPickHint("已產生 10 組號碼，可按「複製全部號碼（多組）」貼去訊息。");
+  });
+  
+  btnCopyList?.addEventListener("click", async () => {
+    const text = formatPickListText(lastPickList);
+    if(!text){
+      setPickHint("未有多組結果：請先按「抽 5 組」或「抽 10 組」。");
+      return;
+    }
+    const ok = await copyText(text);
+    setPickHint(ok ? "已複製全部號碼（每行一組）。" : "複製失敗：你可以手動選取多組結果再複製。");
+  });
+
   
   // 先嘗試從網址讀取 pick
   const existing = readPickFromUrl();
