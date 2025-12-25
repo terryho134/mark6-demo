@@ -90,11 +90,19 @@
   </div>
 
   <div class="card" id="resultCard" style="display:none;">
-    <h3 style="margin-top:0;">結果</h3>
-    <div id="mainResult"></div>
-
+    <div class="row" style="justify-content:space-between;">
+      <h3 style="margin:0;">結果</h3>
+  
+      <label>
+        半注（$5）
+        <input id="halfResult" type="checkbox">
+      </label>
+    </div>
+  
+    <div id="mainResult" style="margin-top:10px;"></div>
     <div id="recentBlock" style="margin-top:14px;"></div>
   </div>
+
 
   <p><a href="/">返回首頁</a></p>
 
@@ -106,6 +114,7 @@
   const chancesPill = document.getElementById("chancesPill");
   const stakePill = document.getElementById("stakePill");
   const halfEl = document.getElementById("half");
+  const halfResultEl = document.getElementById("halfResult");
 
   const drawDateEl = document.getElementById("drawDate");
   const yearEl = document.getElementById("year");
@@ -368,13 +377,31 @@
     updateChancesStake();
   });
 
+  let syncingHalf = false;
+  
+  function syncHalfUI(from) {
+    if (syncingHalf) return;
+    syncingHalf = true;
+    const v = from.checked;
+    halfEl.checked = v;
+    if (halfResultEl) halfResultEl.checked = v;
+    syncingHalf = false;
+  }
+  
   halfEl.addEventListener("change", ()=>{
+    syncHalfUI(halfEl);
     updateChancesStake();
-    // if already showing results, re-run check quickly
-    if(resultCard.style.display !== "none"){
-      runCheck();
-    }
+    if(resultCard.style.display !== "none") runCheck();
   });
+  
+  if (halfResultEl) {
+    halfResultEl.addEventListener("change", ()=>{
+      syncHalfUI(halfResultEl);
+      updateChancesStake();
+      if(resultCard.style.display !== "none") runCheck();
+    });
+  }
+
 
   function ticketPayload(){
     const half = halfEl.checked;
@@ -485,6 +512,7 @@
 
       statusEl.textContent="";
       resultCard.style.display="block";
+      if (halfResultEl) halfResultEl.checked = halfEl.checked;
       mainResultEl.innerHTML = renderMain(data.main);
 
       // only show recent block if user didn't specify drawNo/date
