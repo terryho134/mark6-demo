@@ -100,15 +100,60 @@
     `;
   }
 
+  function formatYMDToHK(ymd){
+  // ymd: "YYYY-MM-DD"
+  if(!ymd) return "";
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return ymd;
+  return `${m[1]}年${m[2]}月${m[3]}日`;
+}
+
   function renderNext(data){
-    const el = document.getElementById("next");
-    const n = data.nextDraw || {};
-    el.classList.remove("loading");
-    el.innerHTML = `
-      <div>下期日期：<strong>${n.drawDate || "—"}</strong></div>
-      ${n.note ? `<div class="muted">${n.note}</div>` : ""}
+    const nextEl = document.getElementById("next");
+    nextEl.classList.remove("loading");
+  
+    const nd = data?.nextDraw || {};
+    const drawNo = nd.drawNo || "";
+    const drawDate = nd.drawDate || "";
+    const jackpotM = (nd.jackpotMillion !== null && nd.jackpotMillion !== undefined) ? nd.jackpotMillion : "";
+    const jackpotAmount = nd.jackpotAmount || null;
+  
+    if(!drawNo && !drawDate && jackpotM === ""){
+      nextEl.innerHTML = `
+        <div class="card">
+          <h3>下期攪珠</h3>
+          <p class="muted">暫未設定下期資料（請到管理頁輸入）。</p>
+        </div>
+      `;
+      return;
+    }
+  
+    nextEl.innerHTML = `
+      <div class="card">
+        <h3>下期攪珠</h3>
+  
+        <div style="margin-top:8px;">
+          <div><strong>期數：</strong>${drawNo || "—"}</div>
+          <div><strong>日期：</strong>${drawDate ? formatYMDToHK(drawDate) : "—"}</div>
+          <div><strong>估計頭獎基金：</strong>
+            ${
+              jackpotM !== ""
+                ? `約 HK$ ${Number(jackpotM).toLocaleString("en-US")} 百萬`
+                : "—"
+            }
+            ${
+              jackpotAmount
+                ? `（約 HK$ ${Number(jackpotAmount).toLocaleString("en-US")}）`
+                : ""
+            }
+          </div>
+        </div>
+  
+        <p class="muted" style="margin-top:10px;">以官方公佈為準</p>
+      </div>
     `;
   }
+
 
   function renderDisclaimer(data){
     const el = document.getElementById("disclaimer");
