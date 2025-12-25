@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mark6 管理頁</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "PingFang HK", "Noto Sans TC", Arial, sans-serif; margin: 24px; line-height: 1.6; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    input, button { padding: 8px 10px; }
+    .muted { color:#666; font-size: 14px; }
+    .error { color:#b00020; }
+    code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h1>Mark6 管理頁（寫入 D1）</h1>
+  <p class="muted">提示：密碼你而家設為 <code>123456</code>（非常易被猜中，建議之後改長啲）。</p>
+
+  <div class="card">
+    <div class="row">
+      <label>管理密碼</label>
+      <input id="key" type="password" placeholder="123456" />
+      <button id="saveKey">記住密碼</button>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <label>期數</label>
+      <input id="drawNo" placeholder="123/2025" />
+      <label>日期</label>
+      <input id="drawDate" type="date" />
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <label>6 個號碼</label>
+      <input id="nums" placeholder="例如：1 7 12 23 36 44" style="min-width: 320px;" />
+      <label>特別號</label>
+      <input id="special" type="number" min="1" max="49" style="width:90px;" />
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <label>下期日期（可選）</label>
+      <input id="nextDrawDate" type="date" />
+      <button id="submit">提交更新</button>
+    </div>
+
+    <div id="msg" class="muted" style="margin-top:12px;"></div>
+  </div>
+
+  <p><a href="/">返回首頁</a></p>
+
+  <script>
+    const keyEl = document.getElementById("key");
+    const msgEl = document.getElementById("msg");
+
+    // load saved key
+    const saved = localStorage.getItem("ADMIN_KEY");
+    if(saved) keyEl.value = saved;
+
+    document.getElementById("saveKey").addEventListener("click", () => {
+      localStorage.setItem("ADMIN_KEY", keyEl.value || "");
+      msgEl.textContent = "已記住密碼（只儲存在你部電腦瀏覽器）。";
+    });
+
+    function parseNums(s){
+      return (s || "").trim().split(/[\s,，]+/).filter(Boolean).map(x => parseInt(x,10));
+    }
+
+    document.getElementById("submit").addEventListener("click", async () => {
+      msgEl.textContent = "提交中…";
+
+      const payload = {
+        drawNo: document.getElementById("drawNo").value.trim(),
+        drawDate: document.getElementById("drawDate").value,
+        numbers: parseNums(document.getElementById("nums").value),
+        special: parseInt(document.getElementById("special").value, 10),
+        nextDrawDate: document.getElementById("nextDrawDate").value || null
+      };
+
+      try{
+        const res = await fetch("/api/admin/upsert", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "X-Admin-Key": keyEl.value || ""
+          },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(()=> ({}));
+        if(!res.ok){
+          msgEl.innerHTML = `<span class="error">失敗：${data.error || ("HTTP " + res.status)}</span>`;
+          return;
+        }
+        msgEl.textContent = "成功！返回首頁刷新即可見到更新。";
+      }catch(e){
+        msgEl.innerHTML = `<span class="error">提交失敗：${e.message}</span>`;
+      }
+    });
+  </script>
+</body>
+</html>
