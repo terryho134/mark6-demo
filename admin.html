@@ -33,7 +33,7 @@
 
     <div class="row">
       <label>期數</label>
-      <input id="drawNo" placeholder="例如：123/2025" />
+      <input id="drawNo" placeholder="例如：25/018" />
       <span class="muted" id="prefillHint"></span>
     </div>
 
@@ -106,30 +106,52 @@
     }
 
     function parseDrawNo(s){
-      const m = String(s || "").trim().match(/^(\d+)\s*\/\s*(\d{4})$/);
-      if(!m) return null;
-      return { seq: parseInt(m[1],10), year: parseInt(m[2],10) };
+      s = String(s || "").trim();
+    
+      // 新格式：YY/XXX 例：25/018
+      let m = s.match(/^(\d{2})\s*\/\s*(\d{3})$/);
+      if(m){
+        const yy = parseInt(m[1],10);
+        const seq = parseInt(m[2],10);
+        const yearFull = 2000 + yy; // 假設 2000-2099
+        return { yy, yearFull, seq };
+      }
+    
+      // 兼容舊格式（如你 DB 以前有）：XXX/YYYY 例：018/2025
+      m = s.match(/^(\d{1,3})\s*\/\s*(\d{4})$/);
+      if(m){
+        const seq = parseInt(m[1],10);
+        const yearFull = parseInt(m[2],10);
+        const yy = yearFull % 100;
+        return { yy, yearFull, seq };
+      }
+    
+      return null;
     }
-
-    function formatDrawNo(seq, year){
+    
+    function formatDrawNo(yearFull, seq){
+      const yy = String(yearFull % 100).padStart(2, "0");
       const s = String(seq).padStart(3, "0");
-      return `${s}/${year}`;
+      return `${yy}/${s}`;
     }
-
-    // 計算：根據「今期 drawNo」+「下期日期 year」推算下期期數
+    
+    // 計算下期期數：根據「今期 seq」+「下期日期 year」推算
     function computeNextDrawNo(){
       const cur = parseDrawNo(drawNoEl.value);
-      const nd = nextDrawDateEl.value;
-      if(!cur || !nd) { nextDrawNoEl.value = ""; return; }
-      const nextYear = parseInt(nd.slice(0,4),10);
-      if(!Number.isFinite(nextYear)) { nextDrawNoEl.value = ""; return; }
-
-      if(nextYear === cur.year){
-        nextDrawNoEl.value = formatDrawNo(cur.seq + 1, nextYear);
+    
+      const nd = nextDrawDateEl.value; // YYYY-MM-DD
+      if(!nd || !cur) { nextDrawNoEl.value = ""; return; }
+    
+      const nextYearFull = parseInt(nd.slice(0,4),10);
+      if(!Number.isFinite(nextYearFull)) { nextDrawNoEl.value = ""; return; }
+    
+      if(nextYearFull === cur.yearFull){
+        nextDrawNoEl.value = formatDrawNo(nextYearFull, cur.seq + 1);
       }else{
-        nextDrawNoEl.value = formatDrawNo(1, nextYear); // 新一年 -> 001/新年份
+        nextDrawNoEl.value = formatDrawNo(nextYearFull, 1); // 新一年 -> YY/001
       }
     }
+
 
     // 預填：由 DB 取最新一期，再推算「你下一期要輸入」的 drawNo
     let lastDraw = null;
@@ -141,20 +163,25 @@
     });
 
     drawDateEl.addEventListener("change", () => {
-      // 如果 admin 未手動改期數，根據選擇的「今期攪珠日期年份」自動預填
       if(!lastDraw || drawNoTouched) return;
+    
       const y = drawDateEl.value ? parseInt(drawDateEl.value.slice(0,4),10) : null;
       const last = parseDrawNo(lastDraw.drawNo);
-      if(!y || !last) return;
-
-      if(y === last.year){
-        drawNoEl.value = formatDrawNo(last.seq + 1, y);
+      const lastYearByDate = lastDraw.drawDate ? parseInt(lastDraw.drawDate.slice(0,4),10) : null;
+      const lastYearFull = Number.isFinite(lastYearByDate) ? lastYearByDate : (last ? last.yearFull : null);
+    
+      if(!y || !last || !lastYearFull) return;
+    
+      if(y === lastYearFull){
+        drawNoEl.value = formatDrawNo(y, last.seq + 1);
       }else{
-        drawNoEl.value = formatDrawNo(1, y);
+        drawNoEl.value = formatDrawNo(y, 1);
       }
+    
       prefillHintEl.textContent = `(已根據 DB 最新一期自動預填)`;
       computeNextDrawNo();
     });
+
 
     nextDrawDateEl.addEventListener("change", computeNextDrawNo);
 
@@ -178,18 +205,25 @@
 
         // 只在 drawNo 空白時預填（避免覆蓋你手動輸入）
         if(!drawNoEl.value){
+          // 用 DB 最新一期（lastDraw）去推算「你下一期要輸入」的期數
           const last = parseDrawNo(lastDraw.drawNo);
-          const today = new Date();
-          const y = today.getFullYear();
-
-          if(last && y === last.year){
-            drawNoEl.value = formatDrawNo(last.seq + 1, y);
+          const lastYearByDate = lastDraw.drawDate ? parseInt(lastDraw.drawDate.slice(0,4),10) : null;
+        
+          // 以 drawDate 的年份為主（最穩）
+          const lastYearFull = Number.isFinite(lastYearByDate) ? lastYearByDate : (last ? last.yearFull : null);
+          const todayYearFull = new Date().getFullYear();
+        
+          if(last && lastYearFull === todayYearFull){
+            drawNoEl.value = formatDrawNo(todayYearFull, last.seq + 1);
           }else{
-            drawNoEl.value = formatDrawNo(1, y);
+            // 跨年（或解析不到 last），就先預填為今年第 1 期（你亦可之後改攪珠日期再自動修正）
+            drawNoEl.value = formatDrawNo(todayYearFull, 1);
           }
-          prefillHintEl.textContent = `(已根據 DB 最新一期自動預填；如跨年請改攪珠日期以自動修正)`;
+        
+          prefillHintEl.textContent = `(已根據 DB 最新一期自動預填；如跨年，改「攪珠日期」會自動修正)`;
           computeNextDrawNo();
         }
+
 
         // 順便預填已存的下期資料（可選）
         if(data?.nextDraw?.drawDate && !nextDrawDateEl.value) nextDrawDateEl.value = data.nextDraw.drawDate;
