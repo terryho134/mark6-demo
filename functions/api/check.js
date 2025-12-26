@@ -316,9 +316,6 @@ export async function onRequest({ request, env }) {
     const list = rows?.results || [];
 
     for (const row of list) {
-      // skip the latest draw already shown? (optional) — keep it simple: include if it wins and is not the main draw
-      if (row.drawNo === main.draw.drawNo) continue;
-
       const r = computeForDraw(ticket, row);
       const hasAny =
         (r.result.units.div1 + r.result.units.div2 + r.result.units.div3 +
@@ -329,6 +326,8 @@ export async function onRequest({ request, env }) {
         recentWins.push({
           drawNo: r.draw.drawNo,
           drawDate: r.draw.drawDate,
+          numbers: r.draw.numbers, // ✅ 加入正選
+          extra: r.draw.extra,     // ✅ 加入特別號
           summary: r.result.summary,
           fixedTotal: r.result.fixedAmount.totalFixed,
           topPrizeNote: r.result.topPrizeNote,
