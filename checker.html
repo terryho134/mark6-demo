@@ -43,10 +43,11 @@
       <button id="clear">清除</button>
       <span class="pill" id="chancesPill">份數：—</span>
       <span class="pill" id="stakePill">投注額：—</span>
-      <label>
-        半注（$5）
+      <label id="halfWrap" style="margin-left:auto; display:inline-flex; align-items:center; gap:6px;">
         <input id="half" type="checkbox">
+        半注（$5）
       </label>
+
     </div>
 
     <div style="margin-top:10px;">
@@ -113,7 +114,7 @@
   <div class="card" id="resultCard" style="display:none;">
     <h3 style="margin:0;">結果</h3>
 
-    <label class="muted" style="margin-left:12px;">
+    <label id="rangeWrap" class="muted" style="margin-left:12px;">
       核對範圍：
       <select id="rangePreset">
         <option value="60days" selected>近60日</option>
@@ -123,10 +124,11 @@
     </label>
 
     
-    <label class="muted" style="display:inline-flex; align-items:center; gap:8px; margin-top:8px;">
+    <label id="halfResultWrap" style="display:inline-flex; align-items:center; gap:6px;">
       <input id="halfResult" type="checkbox">
       半注（$5）
     </label>
+
 
   
     <div id="mainResult" style="margin-top:10px;"></div>
@@ -138,6 +140,7 @@
 
 <script>
   const rangeEl = document.getElementById("rangePreset");
+  const rangeWrapEl = document.getElementById("rangeWrap");
   
   const multiModeEl = document.getElementById("multiMode");
   const multiControlsEl = document.getElementById("multiControls");
@@ -173,6 +176,34 @@
   let bankers = new Set();
   let legs = new Set();
 
+  
+  function updateHalfVisibility(){
+    const show = (type !== "single"); // 單式：唔顯示半注
+  
+    if (!show) {
+      // 單式時強制關閉半注，避免狀態殘留影響計算
+      halfEl.checked = false;
+      if (halfResultEl) halfResultEl.checked = false;
+    }
+  
+    if (halfWrapEl) halfWrapEl.style.display = show ? "inline-flex" : "none";
+    if (halfResultWrapEl) halfResultWrapEl.style.display = show ? "inline-flex" : "none";
+  }
+
+  function updateRangeVisibility(){
+    // 有指定單期：日期 or 期數
+    const hasSingleTarget = !!drawDateEl.value || !!drawNoEl.value;
+  
+    // 多期模式
+    const isMulti = (typeof multiModeEl !== "undefined" && multiModeEl) ? multiModeEl.checked : false;
+  
+    // 只有「完全無指定」先顯示核對範圍切換
+    const show = !hasSingleTarget && !isMulti;
+  
+    if (rangeWrapEl) rangeWrapEl.style.display = show ? "inline-flex" : "none";
+  }
+
+
   function pad2(x){ return String(x).padStart(2,"0"); }
   function pad3(x){ return String(x).padStart(3,"0"); }
   function yyFromYear(y){ return pad2(Number(y)%100); }
@@ -182,6 +213,7 @@
     const seq = parseInt(seqEl.value,10);
     if(!y || !Number.isFinite(seq) || seq<=0) { drawNoEl.value=""; return; }
     drawNoEl.value = `${yyFromYear(y)}/${pad3(seq)}`;
+    updateRangeVisibility();
   }
 
   // years dropdown
@@ -241,20 +273,24 @@
       drawDateEl.value="";
       seqEl.value="";
       drawNoEl.value="";
+      updateRangeVisibility();
     }
   }
   
   multiModeEl.addEventListener("change", ()=>{
     setMultiMode(multiModeEl.checked);
+    updateRangeVisibility();
   });
 
   yearEl.addEventListener("change", buildDrawNoFromYearSeq);
   seqEl.addEventListener("input", buildDrawNoFromYearSeq);
+  drawDateEl.addEventListener("change", updateRangeVisibility);
 
   document.getElementById("clearDraw").addEventListener("click", ()=>{
     drawDateEl.value="";
     seqEl.value="";
     drawNoEl.value="";
+    updateRangeVisibility();
   });
 
   // grid buttons 1..49
@@ -280,6 +316,7 @@
     updateHint();
     renderGrid();
     updateChancesStake();
+    updateHalfVisibility();
   }
 
   function updateHint(){
@@ -390,7 +427,7 @@
   }
 
   function validateAndShow(showError=true){
-    const half = halfEl.checked;
+    const half = (type==="single") ? false : halfEl.checked;
     const unitStake = half ? 5 : 10;
 
     if(type==="single"){
@@ -437,7 +474,7 @@
   }
 
   function updateChancesStake(chances=null, unitStake=null){
-    const half = halfEl.checked;
+    const half = (type==="single") ? false : halfEl.checked;
     const u = unitStake ?? (half ? 5 : 10);
 
     let c = chances;
@@ -495,7 +532,7 @@
 
 
   function ticketPayload(){
-    const half = halfEl.checked;
+    const half = (type==="single") ? false : halfEl.checked;
     if(type==="single" || type==="multiple"){
       return { type, half, picks: Array.from(picks).sort((a,b)=>a-b) };
     }
@@ -586,10 +623,13 @@
     return lines.join("");
   }
 
-  function renderRecent(wins){
+  function renderRecent(wins, titleLabel="近60日"){
+    const title = `${titleLabel}（只顯示有中獎）`;
+  
     if(!wins || wins.length===0){
-      return `<h4 style="margin:0 0 8px;">近 60 日</h4><div class="muted">近 60 日未有中獎紀錄。</div>`;
+      return `<h4 style="margin:0 0 8px;">${title}</h4><div class="muted">未有中獎紀錄。</div>`;
     }
+  
     const items = wins.map(w=>{
       const s = w.summary.map(x=>`${x.name}×${x.units}`).join("，");
       const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
@@ -607,8 +647,9 @@
       `;
     }).join("");
   
-    return `<h4 style="margin:0 0 8px;">核對範圍中有中獎的攪珠期數</h4><ol>${items}</ol>`;
+    return `<h4 style="margin:0 0 8px;">${title}</h4><ol>${items}</ol>`;
   }
+
 
   async function runCheck(){
     inputErrEl.textContent="";
@@ -655,13 +696,14 @@
       if (isMulti) {
         // 多期：只顯示 multiWins
         mainResultEl.innerHTML = `<div><strong>多期核對：</strong>由 ${data.multiInfo.startDrawNo} 起，共 ${data.multiInfo.checked} 期（設定：${data.multiInfo.count} 期）</div>`;
-        recentBlockEl.innerHTML = renderRecent(data.multiWins || []);
+        recentBlockEl.innerHTML = renderRecent(data.multiWins || [], `多期核對（${data.multiInfo.startDrawNo} 起）`);
       } else if (!q.drawNo && !q.drawDate) {
         // 範圍：只顯示 recentWins（近60日 / 近30期 / 近60期）
         mainResultEl.innerHTML = data.rangeInfo?.label
           ? `<div class="muted">核對範圍：${data.rangeInfo.label}</div>`
           : "";
-        recentBlockEl.innerHTML = renderRecent(data.recentWins || []);
+        const label = data.rangeInfo?.label || "近60日";
+        recentBlockEl.innerHTML = renderRecent(data.recentWins || [], label);
       } else {
         // 指定單期：顯示 main
         mainResultEl.innerHTML = renderMain(data.main);
@@ -680,6 +722,9 @@
   // init
   updateHint();
   updateChancesStake();
+  updateHalfVisibility();
+  updateRangeVisibility();
+
 </script>
 </body>
 </html>
