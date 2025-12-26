@@ -243,36 +243,112 @@
     return { units };
   }
 
+  function isFeasibleBankerCounts(b, L, bw, be, lw, le){
+    const NNB = 49 - b;     // non-banker total
+    const U = NNB - L;      // non-banker NOT picked (outside legs)
+    const remMain = 6 - bw; // winning mains not in bankers
+  
+    // basic bounds for lw
+    if (lw < 0) return false;
+    if (lw > Math.min(L, remMain)) return false;
+  
+    const wu = remMain - lw; // winning mains outside legs
+    if (wu < 0 || wu > U) return false;
+  
+    if (be === 1) {
+      // extra is in bankers => cannot be in legs
+      if (le !== 0) return false;
+  
+      // non-banker "other" numbers count (excluding remMain)
+      const otherCount = NNB - remMain; // = 43 - b + bw
+      const lo = L - lw;                // legs others
+      if (lo < 0 || lo > otherCount) return false;
+  
+      return true;
+    }
+  
+    // be === 0 (extra is non-banker): extra is either in legs (le=1) or outside legs (le=0)
+    if (le !== 0 && le !== 1) return false;
+  
+    // if extra not in legs, it must be outside legs -> consumes 1 slot in U
+    const extraOutside = (le === 0) ? 1 : 0;
+  
+    // ensure U can accommodate winning mains outside legs + maybe extra outside
+    if (wu + extraOutside > U) return false;
+  
+    // special: full-meal among non-bankers => U==0 => extra must be in legs (if be==0)
+    if (U === 0 && le === 0) return false;
+  
+    // non-banker "other" numbers count excluding remMain and extra
+    const otherCount = NNB - remMain - 1; // = 42 - b + bw
+    const lo = L - lw - le;
+    if (lo < 0 || lo > otherCount) return false;
+  
+    return true;
+  }
+
+
   function listBankerRows(b, L, bw, be, stakeRatio){
     const rows=[];
-    const lwMax = Math.min(L, 6 - bw);
-    const leOptions = (be===1) ? [0] : [0,1];
-
-    for(let lw=0; lw<=lwMax; lw++){
+    const NNB = 49 - b;
+    const U = NNB - L;
+    const remMain = 6 - bw;
+  
+    // lw bounds from "must fit into U"
+    const lwMin = Math.max(0, remMain - U);
+    const lwMax = Math.min(L, remMain);
+  
+    let leOptions = [];
+    if (be === 1) {
+      leOptions = [0];
+    } else {
+      // if U==0 (full meal in non-bankers), extra cannot be outside legs
+      leOptions = (U === 0) ? [1] : [0,1];
+    }
+  
+    for(let lw = lwMin; lw <= lwMax; lw++){
       for(const le of leOptions){
-        if(lw + le > L) continue;
-
+  
+        // ✅ new: filter impossible global scenarios
+        if(!isFeasibleBankerCounts(b, L, bw, be, lw, le)) continue;
+  
         const out = calcBankerUnitsFromCounts(b, L, bw, be, lw, le);
         if(!out) continue;
         if(!hasAnyPrize(out.units)) continue;
-
+  
         const m = bw + lw;
         const e = (be===1 || le===1);
-
+  
         const label = [
           `等效命中：中${m}個正選${e ? " + 特別號" : ""}`,
           `膽：${describeBankerHit(bw, be)}`,
           `腳中${lw}${(be===0 && le===1) ? "（特別號在腳）" : ""}`,
         ].join("｜");
-
+  
         rows.push({
           label,
           units: out.units,
           fixed: fixedTotal(out.units, stakeRatio),
-          topNote: (out.units.div1+out.units.div2+out.units.div3)>0 ? "頭/二/三獎派彩屬浮動（以官方 Unit Prize 為準）" : ""
+          topNote: (out.units.div1+out.units.div2+out.units.div3)>0
+            ? "頭/二/三獎派彩屬浮動（以官方 Unit Prize 為準）"
+            : ""
         });
       }
     }
+  
+    rows.sort((a,b)=>{
+      const getM = (s)=> (s.match(/中(\d+)個正選/)||[])[1] ? Number((s.match(/中(\d+)個正選/)||[])[1]) : 0;
+      const ma=getM(a.label), mb=getM(b.label);
+      if(mb!==ma) return mb-ma;
+      const ea=a.label.includes("特別號")?1:0;
+      const eb=b.label.includes("特別號")?1:0;
+      if(eb!==ea) return eb-ea;
+      return (b.fixed||0)-(a.fixed||0);
+    });
+  
+    return rows;
+  }
+
 
     rows.sort((a,b)=>{
       const getM = (s)=> (s.match(/中(\d+)個正選/)||[])[1] ? Number((s.match(/中(\d+)個正選/)||[])[1]) : 0;
