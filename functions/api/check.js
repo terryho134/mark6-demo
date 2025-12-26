@@ -60,7 +60,7 @@ function contains(aSet, n) {
 
 function calcSingleUnits(pickSet, winSet, extra) {
   const m = intersectionCount(winSet, Array.from(pickSet));
-  const e = contains(pickSet, extra) ? 1 : 0;
+  const e = pickSet.has(extra) ? 1 : 0;
 
   const units = { div1: 0, div2: 0, div3: 0, div4: 0, div5: 0, div6: 0, div7: 0 };
   if (m === 6) units.div1 = 1;
@@ -71,14 +71,19 @@ function calcSingleUnits(pickSet, winSet, extra) {
   else if (m === 3 && e === 1) units.div6 = 1;
   else if (m === 3) units.div7 = 1;
 
-  return { units, chances: 1 };
+  return {
+    units,
+    chances: 1,
+    bestHit: { main: m, extra: e === 1 }, // boolean
+  };
 }
+
 
 function calcMultipleUnits(picksArr, winArr, extra) {
   const pickSet = new Set(picksArr);
   const winSet = new Set(winArr);
 
-  const x = intersectionCount(winSet, picksArr);          // picked winning numbers
+  const x = intersectionCount(winSet, picksArr);          // picked winning numbers (main)
   const y = pickSet.has(extra) ? 1 : 0;                   // picked extra?
   const z = picksArr.length - x - y;                      // other numbers
 
@@ -93,11 +98,19 @@ function calcMultipleUnits(picksArr, winArr, extra) {
 
   const chances = choose(picksArr.length, 6);
 
+  // ✅ best hit (best possible among all 6-number combinations of this multiple ticket)
+  const bestHit = {
+    main: Math.min(6, x),
+    extra: y === 1,
+  };
+
   return {
     units: { div1, div2, div3, div4, div5, div6, div7 },
     chances,
+    bestHit, // ✅ add
   };
 }
+
 
 function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
   const bankers = new Set(bankersArr);
@@ -121,6 +134,10 @@ function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
 
   const units = { div1: 0, div2: 0, div3: 0, div4: 0, div5: 0, div6: 0, div7: 0 };
 
+  // ✅ track best hit across all combinations
+  let bestMain = 0;
+  let bestExtra = false;
+
   // sum over selecting k winning legs, u extra leg (0/1), r other legs
   // constraint: k + u + r = t
   for (let k = 0; k <= Math.min(lw, t); k++) {
@@ -133,18 +150,34 @@ function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
 
       const ways = choose(lw, k) * choose(le, u) * choose(lo, r);
 
-      if (m === 6) units.div1 += ways;                 // extra must be 0 automatically (otherwise m can't be 6)
+      // units by division
+      if (m === 6) units.div1 += ways;
       else if (m === 5 && e === 1) units.div2 += ways;
       else if (m === 5 && e === 0) units.div3 += ways;
       else if (m === 4 && e === 1) units.div4 += ways;
       else if (m === 4 && e === 0) units.div5 += ways;
       else if (m === 3 && e === 1) units.div6 += ways;
       else if (m === 3 && e === 0) units.div7 += ways;
+
+      // ✅ update best hit (only if this selection exists)
+      if (ways > 0) {
+        if (m > bestMain) {
+          bestMain = m;
+          bestExtra = (e === 1);
+        } else if (m === bestMain && e === 1) {
+          bestExtra = true;
+        }
+      }
     }
   }
 
-  return { units, chances };
+  return {
+    units,
+    chances,
+    bestHit: { main: bestMain, extra: bestExtra }, // ✅ add
+  };
 }
+
 
 function calcFixedAmount(units, stakeRatio) {
   const mult = stakeRatio; // 1 or 0.5
@@ -294,6 +327,7 @@ function computeForDraw(ticket, drawRow) {
       units: calc.units,
       summary,              // non-zero divisions
       fixedAmount: fixed,   // div4-7 + totalFixed
+      bestHit: calc.bestHit || null,
       topPrizeNote: hasTop ? "頭/二/三獎派彩屬浮動（以官方該期 Unit Prize 為準）" : null,
     }
   };
@@ -381,6 +415,7 @@ export async function onRequest({ request, env }) {
           drawDate: r.draw.drawDate,
           numbers: r.draw.numbers,
           extra: r.draw.extra,
+          bestHit: r.result.bestHit,
           summary: r.result.summary,
           fixedTotal: r.result.fixedAmount.totalFixed,
           topPrizeNote: r.result.topPrizeNote,
@@ -411,6 +446,7 @@ export async function onRequest({ request, env }) {
           drawDate: out.draw.drawDate,
           numbers: out.draw.numbers,
           extra: out.draw.extra,
+          bestHit: out.result.bestHit,
           summary: out.result.summary,
           fixedTotal: out.result.fixedAmount.totalFixed,
           topPrizeNote: out.result.topPrizeNote,
