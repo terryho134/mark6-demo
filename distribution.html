@@ -69,6 +69,8 @@
     .summaryRow td { background:#fafafa; font-weight:600; }
     .summaryLabel { text-align:left; }
     .summaryCell { font-size:12px; }
+    .summaryCell.big { font-weight:800; }
+    .summaryCell.small { font-weight:800; }
 
   </style>
 </head>
@@ -219,6 +221,16 @@
       const total = c.nums.reduce((a,b)=>a+b,0) + c.extra;
       const avg = total / 7;
       html += `<td class="summaryCell">${avg.toFixed(1)}</td>`;
+    }
+    html += `</tr>`;
+
+    html += `<tr class="summaryRow">`;
+    html += `<td class="stickyCol summaryLabel">平均數大/小</td>`;
+    for (const c of cols) {
+      const total = c.nums.reduce((a,b)=>a+b,0) + c.extra;
+      const avg = total / 7;
+      const tag = (avg >= 24.5) ? "大" : "小";
+      html += `<td class="summaryCell ${cls}">${tag}</td>`;
     }
     html += `</tr>`;
 
