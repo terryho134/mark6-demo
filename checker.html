@@ -480,8 +480,19 @@
       const s = w.summary.map(x=>`${x.name}×${x.units}`).join("，");
       const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
       const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
-      return `<li><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</li>`;
+  
+      const nums = (w.numbers && w.numbers.length)
+        ? `正選：${w.numbers.join(" ")}　特別號：${String(w.extra).padStart(2,"0")}`
+        : "";
+  
+      return `
+        <li style="margin:10px 0;">
+          <div><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</div>
+          ${nums ? `<div class="muted">${nums}</div>` : ""}
+        </li>
+      `;
     }).join("");
+  
     return `<h4 style="margin:0 0 8px;">近 60 日（只顯示有中獎）</h4><ol>${items}</ol>`;
   }
 
@@ -523,15 +534,19 @@
       statusEl.textContent="";
       resultCard.style.display="block";
       if (halfResultEl) halfResultEl.checked = halfEl.checked;
-      mainResultEl.innerHTML = renderMain(data.main);
-
-      // only show recent block if user didn't specify drawNo/date
+      
       const q = data.query || {};
+      
+      // 無指定期數/日期：只顯示近60日（不顯示最新一期）
       if(!q.drawNo && !q.drawDate){
+        mainResultEl.innerHTML = "";
         recentBlockEl.innerHTML = renderRecent(data.recentWins || []);
-      }else{
+      } else {
+        // 有指定期數/日期：顯示該期結果（不顯示近60日）
+        mainResultEl.innerHTML = renderMain(data.main);
         recentBlockEl.innerHTML = "";
       }
+
     }catch(e){
       statusEl.textContent="";
       inputErrEl.textContent = "核對失敗：" + e.message;
