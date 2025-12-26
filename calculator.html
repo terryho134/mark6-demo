@@ -311,7 +311,6 @@
         const e = (be===1 || le===1);
         
         const label = [
-          `命中：中${m}個正選${e ? " + 特別號" : ""}`,   // ✅ 移除「等效」兩字
           `膽：${describeBankerHit(bw, be)}`,
           `腳：${describeLegHit(lw, le)}`,                // ✅ 新格式
         ].join("｜");
@@ -323,20 +322,24 @@
           fixed: fixedTotal(out.units, stakeRatio),
           topNote: (out.units.div1+out.units.div2+out.units.div3)>0
             ? "頭/二/三獎派彩屬浮動（以官方 Unit Prize 為準）"
-            : ""
+            : "",
+          _m: m,    // ✅ hidden sort key
+          _e: e     // ✅ hidden sort key
         });
       }
     }
 
     rows.sort((a,b)=>{
-      const getM = (s)=> (s.match(/中(\d+)個正選/)||[])[1] ? Number((s.match(/中(\d+)個正選/)||[])[1]) : 0;
-      const ma=getM(a.label), mb=getM(b.label);
-      if(mb!==ma) return mb-ma;
-      const ea=a.label.includes("特別號")?1:0;
-      const eb=b.label.includes("特別號")?1:0;
-      if(eb!==ea) return eb-ea;
-      return (b.fixed||0)-(a.fixed||0);
+      // 先排「總命中正選數」(m) 由大到細（雖然唔顯示，但最符合常識）
+      if((b._m||0) !== (a._m||0)) return (b._m||0) - (a._m||0);
+    
+      // 再排有冇特別號（e=1 排前）
+      if((b._e||0) !== (a._e||0)) return (b._e||0) - (a._e||0);
+    
+      // 再排固定獎金高低
+      return (b.fixed||0) - (a.fixed||0);
     });
+
 
     return rows;
   }
