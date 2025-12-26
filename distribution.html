@@ -110,6 +110,7 @@
   let currentN = 10;
 
   function pad2(n){ return String(n).padStart(2, "0"); }
+  function fmtN(n){ return String(n); } // 1-49 不補零
 
   function fmtYMD(ymd){
     if(!ymd) return "";
@@ -163,13 +164,13 @@
     html += "<tbody>";
     for(let n=1; n<=49; n++){
       html += "<tr>";
-      html += `<td class="stickyCol">${pad2(n)}</td>`;
+      html += `<td class="stickyCol">${fmtN(n)}</td>`;
 
     for(const c of cols){
       if(c.extra === n){
-        html += `<td class="hitExtra">${pad2(n)}</td>`;
+        html += `<td class="hitExtra">${fmtN2(n)}</td>`;
       } else if(c.main.has(n)){
-        html += `<td class="hitMain">${pad2(n)}</td>`;
+        html += `<td class="hitMain">${fmtN2(n)}</td>`;
       } else {
         html += `<td></td>`;
       }
