@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>近期攪珠號碼分布｜Mark6</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "PingFang HK", "Noto Sans TC", Arial, sans-serif; margin: 24px; line-height: 1.55; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:16px; margin:12px 0; }
+    .muted { color:#666; font-size:14px; }
+    button { padding:8px 10px; cursor:pointer; }
+    button.on { background:#111; color:#fff; border:1px solid #111; }
+    .legend { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+    .swatch { display:inline-block; width:14px; height:14px; border-radius:4px; border:1px solid #ddd; vertical-align:middle; margin-right:6px; }
+    .swatch.main { background:#ffe26a; border-color:#f2d24b; }
+    .swatch.extra { background:#ff4d4d; border-color:#e53f3f; }
+
+    .tableWrap{
+      overflow:auto;
+      border:1px solid #eee;
+      border-radius:10px;
+      max-height: 70vh;
+    }
+
+    table { border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; }
+    th, td { border-bottom:1px solid #eee; border-right:1px solid #eee; padding:6px 8px; font-size:14px; text-align:center; white-space:nowrap; background:#fff; }
+    th { background:#fafafa; font-weight:600; }
+    tr:last-child td { border-bottom:none; }
+    th:last-child, td:last-child { border-right:none; }
+
+    /* sticky header */
+    thead th { position: sticky; top: 0; z-index: 2; }
+
+    /* sticky first column (numbers 1-49) */
+    .stickyCol { position: sticky; left: 0; z-index: 3; background:#fafafa; }
+    tbody .stickyCol { background:#fff; z-index: 1; font-weight:600; }
+
+    /* cells */
+    .hitMain { background:#ffe26a; font-weight:700; }
+    .hitExtra { background:#ff4d4d; color:#fff; font-weight:800; }
+
+    .small { font-size:12px; color:#666; font-weight:500; display:block; margin-top:2px; }
+    .err { color:#b00020; }
+    code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h1>近期攪珠號碼分布</h1>
+  <p class="muted">
+    左邊為 1–49 號碼，上方為近 X 期（預設 10 期）。正選以黃色標示，特別號以紅色標示。
+  </p>
+
+  <div class="card">
+    <div class="row">
+      <div class="legend">
+        <span><span class="swatch main"></span>正選</span>
+        <span><span class="swatch extra"></span>特別號</span>
+      </div>
+
+      <div style="margin-left:auto;" class="row">
+        <span class="muted">顯示期數：</span>
+        <button class="preset on" data-n="10">近10期</button>
+        <button class="preset" data-n="30">近30期</button>
+        <button class="preset" data-n="60">近60期</button>
+        <button id="reload">重新載入</button>
+      </div>
+    </div>
+
+    <div class="muted" style="margin-top:10px;">
+      提示：如你見到空白表格或錯誤，通常係 API <code>/api/draws</code> 未加好或回傳格式唔啱。
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="status" class="muted">載入中…</div>
+    <div id="error" class="err" style="margin-top:8px;"></div>
+
+    <div class="tableWrap" style="margin-top:12px;">
+      <table id="tbl" aria-label="近期攪珠號碼分布表"></table>
+    </div>
+  </div>
+
+  <p><a href="/">返回首頁</a></p>
+
+<script>
+  const statusEl = document.getElementById("status");
+  const errorEl = document.getElementById("error");
+  const tbl = document.getElementById("tbl");
+  const presetBtns = Array.from(document.querySelectorAll(".preset"));
+  const reloadBtn = document.getElementById("reload");
+
+  let currentN = 10;
+
+  function pad2(n){ return String(n).padStart(2, "0"); }
+
+  function fmtYMD(ymd){
+    if(!ymd) return "";
+    // accept YYYY-MM-DD
+    const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(m) return `${m[2]}/${m[3]}`; // show MM/DD compact
+    return ymd;
+  }
+
+  function setActivePreset(n){
+    currentN = n;
+    presetBtns.forEach(b => b.classList.toggle("on", Number(b.dataset.n) === n));
+  }
+
+  async function fetchDraws(limit){
+    const res = await fetch(`/api/draws?limit=${limit}`, { headers: { "accept": "application/json" } });
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok || !data.ok){
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return data.draws || [];
+  }
+
+  function buildMatrix(draws){
+    // columns = draws (latest first), rows = 1..49
+    // We build a quick lookup per draw: Set of main numbers and extra
+    const cols = draws.map(d => ({
+      drawNo: d.drawNo,
+      drawDate: d.drawDate,
+      main: new Set(d.numbers || []),
+      extra: Number(d.extra)
+    }));
+
+    // header
+    let html = "<thead><tr>";
+    html += `<th class="stickyCol">號碼</th>`;
+    for(const c of cols){
+      html += `<th>${c.drawNo}<span class="small">${fmtYMD(c.drawDate)}</span></th>`;
+    }
+    html += "</tr></thead>";
+
+    // body
+    html += "<tbody>";
+    for(let n=1; n<=49; n++){
+      html += "<tr>";
+      html += `<td class="stickyCol">${pad2(n)}</td>`;
+
+      for(const c of cols){
+        if(c.extra === n){
+          html += `<td class="hitExtra">★</td>`;
+        } else if(c.main.has(n)){
+          html += `<td class="hitMain">●</td>`;
+        } else {
+          html += `<td></td>`;
+        }
+      }
+
+      html += "</tr>";
+    }
+    html += "</tbody>";
+
+    tbl.innerHTML = html;
+  }
+
+  async function load(){
+    errorEl.textContent = "";
+    statusEl.textContent = `載入近 ${currentN} 期…`;
+    tbl.innerHTML = "";
+
+    try{
+      const draws = await fetchDraws(currentN);
+      if(!draws.length){
+        statusEl.textContent = "未有資料。";
+        return;
+      }
+      statusEl.textContent = `已載入近 ${draws.length} 期（由新到舊）。`;
+      buildMatrix(draws);
+    }catch(e){
+      statusEl.textContent = "";
+      errorEl.textContent = "載入失敗：" + e.message;
+    }
+  }
+
+  presetBtns.forEach(b=>{
+    b.addEventListener("click", ()=>{
+      setActivePreset(Number(b.dataset.n));
+      load();
+    });
+  });
+
+  reloadBtn.addEventListener("click", load);
+
+  // init
+  setActivePreset(10);
+  load();
+</script>
+</body>
+</html>
