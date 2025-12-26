@@ -108,13 +108,21 @@
   }
 
   async function fetchDraws(limit){
-    const res = await fetch(`/api/draws?limit=${limit}`, { headers: { "accept": "application/json" } });
-    const data = await res.json().catch(()=> ({}));
-    if(!res.ok || !data.ok){
-      throw new Error(data.error || `HTTP ${res.status}`);
+    const res = await fetch(`/api/draws?limit=${limit}`, { headers: { "accept":"application/json" } });
+    const ct = res.headers.get("content-type") || "";
+  
+    if(!ct.includes("application/json")){
+      const text = await res.text();
+      throw new Error(`API 回傳非 JSON（HTTP ${res.status}）。前 200 字：` + text.slice(0,200));
+    }
+  
+    const data = await res.json();
+    if(!res.ok || data.ok !== true){
+      throw new Error(data.error || `API ok=false（HTTP ${res.status}）`);
     }
     return data.draws || [];
   }
+
 
   function buildMatrix(draws){
     // columns = draws (latest first), rows = 1..49
