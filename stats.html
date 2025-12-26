@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>號碼統計｜Mark6</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "PingFang HK", "Noto Sans TC", Arial, sans-serif; margin: 24px; line-height: 1.55; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:16px; margin:12px 0; }
+    .muted { color:#666; font-size:14px; }
+    .error { color:#b00020; }
+    table { border-collapse: separate; border-spacing:0; width: 100%; }
+    th, td { border-bottom:1px solid #eee; padding:6px 8px; font-size:13px; text-align:center; white-space:nowrap; background:#fff; }
+    th { position: sticky; top:0; background:#fafafa; z-index:2; }
+    td:first-child, th:first-child { text-align:left; }
+    .thBtn { cursor:pointer; user-select:none; display:inline-flex; gap:6px; align-items:center; }
+    .thBtn .arrow { font-size:12px; color:#666; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:13px; }
+    .tableWrap { overflow:auto; border:1px solid #eee; border-radius:10px; max-height: 80vh; }
+  </style>
+</head>
+<body>
+  <h1>號碼統計</h1>
+  <p class="muted">開出次數包括「正選 + 特別號」。點擊欄頭可排序（少→多 / 多→少）。</p>
+
+  <div class="card">
+    <div class="row">
+      <span class="pill" id="totalPill">總期數：—</span>
+      <span class="muted" id="hint"></span>
+    </div>
+
+    <div class="tableWrap" style="margin-top:12px;">
+      <table>
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <div id="err" class="error" style="margin-top:10px;"></div>
+  </div>
+
+  <p><a href="/">返回首頁</a></p>
+
+<script>
+  const thead = document.getElementById("thead");
+  const tbody = document.getElementById("tbody");
+  const errEl = document.getElementById("err");
+  const totalPill = document.getElementById("totalPill");
+  const hintEl = document.getElementById("hint");
+
+  // 紅/藍 10 級（深→淺）
+  const RED_10  = ["#7f1d1d","#991b1b","#b91c1c","#dc2626","#ef4444","#f87171","#fca5a5","#fecaca","#fee2e2","#fff1f2"];
+  const BLUE_10 = ["#1e3a8a","#1d4ed8","#2563eb","#3b82f6","#60a5fa","#93c5fd","#bfdbfe","#dbeafe","#eff6ff","#f8fbff"];
+
+  // gap 灰階：用「相對最大 gap」分 10 級；gap=0 淡綠
+  function gapStyle(gap, maxGap){
+    if (gap === 0) return { bg: "#e8f5e9", fg: "#111" }; // 淡綠
+    if (gap == null) return { bg: "#fff", fg: "#111" };
+
+    const lvl = Math.min(10, Math.max(1, Math.ceil((gap / Math.max(1, maxGap)) * 10)));
+    // 由淺灰→深灰（10級）
+    const grays = ["#f7f7f7","#efefef","#e6e6e6","#dcdcdc","#d1d1d1","#c4c4c4","#b5b5b5","#a1a1a1","#8f8f8f","#7a7a7a"];
+    const bg = grays[lvl - 1];
+    const fg = (lvl >= 8) ? "#fff" : "#111";
+    return { bg, fg };
+  }
+
+  // 排序狀態
+  let sortKey = null;
+  let sortDir = "asc"; // asc: 少→多；desc: 多→少
+
+  let raw = null; // { totalDraws, top10, bottom10, items[] }
+
+  function buildHeader(totalDraws){
+    const cols = [
+      { key:"n",    label:"號碼", sortable:true },
+      { key:"gap",  label:"相隔期數（gap）", sortable:true },
+      { key:"total",label:`總次數（自2002-07-04｜共${totalDraws}期）`, sortable:true },
+      { key:"r100", label:"近100期", sortable:true },
+      { key:"r50",  label:"近50期", sortable:true },
+      { key:"r30",  label:"近30期", sortable:true },
+      { key:"r20",  label:"近20期", sortable:true },
+      { key:"r10",  label:"近10期", sortable:true },
+    ];
+
+    const tr = document.createElement("tr");
+    for (const c of cols){
+      const th = document.createElement("th");
+
+      const btn = document.createElement("span");
+      btn.className = "thBtn";
+      btn.innerHTML = `<span>${c.label}</span><span class="arrow">${(sortKey===c.key) ? (sortDir==="asc" ? "▲" : "▼") : "↕"}</span>`;
+      btn.addEventListener("click", ()=>{
+        if (sortKey === c.key) {
+          sortDir = (sortDir === "asc") ? "desc" : "asc";
+        } else {
+          sortKey = c.key;
+          sortDir = "asc"; // 先少→多
+        }
+        render();
+      });
+
+      th.appendChild(btn);
+      tr.appendChild(th);
+    }
+    thead.innerHTML = "";
+    thead.appendChild(tr);
+  }
+
+  function buildRankMaps(items){
+    // total 的 Top10/Bottom10：按 total 排序
+    const byTotalDesc = [...items].sort((a,b)=> b.total - a.total || a.n - b.n);
+    const top = byTotalDesc.slice(0,10).map(x=>x.n);
+    const bottom = [...byTotalDesc].slice(-10).sort((a,b)=> a.total - b.total || a.n - b.n).map(x=>x.n);
+
+    const topRank = new Map();    // n -> 0..9（0最深）
+    const bottomRank = new Map(); // n -> 0..9（0最深）
+    top.forEach((n,i)=> topRank.set(n,i));
+    bottom.forEach((n,i)=> bottomRank.set(n,i));
+    return { topRank, bottomRank };
+  }
+
+  function sortItems(items){
+    if (!sortKey) return items;
+
+    const dir = (sortDir === "asc") ? 1 : -1;
+    const k = sortKey;
+
+    return [...items].sort((a,b)=>{
+      const va = a[k];
+      const vb = b[k];
+
+      // null/undefined 排到最後
+      if (va == null && vb == null) return a.n - b.n;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+
+      // number sort
+      if (va !== vb) return (va - vb) * dir;
+      return (a.n - b.n);
+    });
+  }
+
+  function render(){
+    errEl.textContent = "";
+    if (!raw) return;
+
+    const items = raw.items || [];
+    const maxGap = Math.max(...items.map(x => (x.gap == null ? 0 : x.gap)));
+
+    const { topRank, bottomRank } = buildRankMaps(items);
+
+    buildHeader(raw.totalDraws);
+
+    const sorted = sortItems(items);
+
+    tbody.innerHTML = "";
+    for (const it of sorted){
+      const tr = document.createElement("tr");
+
+      // 1) 號碼
+      tr.appendChild(tdText(String(it.n)));
+
+      // 2) gap（灰階，gap=0 淡綠）
+      const tdGap = tdText(it.gap == null ? "—" : String(it.gap));
+      const gs = gapStyle(it.gap, maxGap);
+      tdGap.style.background = gs.bg;
+      tdGap.style.color = gs.fg;
+      tr.appendChild(tdGap);
+
+      // 3) 總次數（Top10 紅 / Bottom10 藍，10級）
+      const tdTotal = tdText(String(it.total));
+      if (topRank.has(it.n)) {
+        const i = topRank.get(it.n); // 0..9
+        tdTotal.style.background = RED_10[i];
+        tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
+      } else if (bottomRank.has(it.n)) {
+        const i = bottomRank.get(it.n); // 0..9
+        tdTotal.style.background = BLUE_10[i];
+        tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
+      }
+      tr.appendChild(tdTotal);
+
+      // 4-8) 近期欄（暫時唔上色）
+      tr.appendChild(tdText(String(it.r100)));
+      tr.appendChild(tdText(String(it.r50)));
+      tr.appendChild(tdText(String(it.r30)));
+      tr.appendChild(tdText(String(it.r20)));
+      tr.appendChild(tdText(String(it.r10)));
+
+      tbody.appendChild(tr);
+    }
+
+    hintEl.textContent = sortKey ? `排序：${sortKey}（${sortDir==="asc" ? "少→多" : "多→少"}）` : "";
+  }
+
+  function tdText(text){
+    const td = document.createElement("td");
+    td.textContent = text;
+    return td;
+  }
+
+  async function load(){
+    try{
+      const res = await fetch("/api/stats", { headers: { "accept":"application/json" }});
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        const t = await res.text();
+        throw new Error("API 回傳非 JSON（HTTP "+res.status+"）："+t.slice(0,120));
+      }
+      const data = await res.json();
+      if (!res.ok || data.ok !== true) throw new Error(data.error || ("HTTP "+res.status));
+
+      raw = data;
+      totalPill.textContent = `總期數：${data.totalDraws.toLocaleString("en-US")}`;
+      render();
+    } catch(e){
+      errEl.textContent = "載入失敗：" + e.message;
+    }
+  }
+
+  load();
+</script>
+</body>
+</html>
