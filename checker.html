@@ -78,6 +78,27 @@
       <input id="drawNo" readonly placeholder="YY/XXX" style="width:100px;">
       <button id="clearDraw">清除期數/日期</button>
     </div>
+    <div class="row" style="margin-top:10px;">
+      <label>
+        <input id="multiMode" type="checkbox">
+        多期核對
+      </label>
+    
+      <div id="multiControls" style="display:none;" class="row">
+        <span class="muted">由</span>
+        <select id="multiYear"></select>
+        <select id="multiSeq"></select>
+        <span class="muted">起，核對</span>
+        <select id="multiCount">
+          <option value="5">5期</option>
+          <option value="10">10期</option>
+          <option value="20">20期</option>
+          <option value="30" selected>30期</option>
+        </select>
+        <span class="muted">（開始期：</span><input id="startDrawNo" readonly style="width:100px;" placeholder="YY/XXX"><span class="muted">）</span>
+      </div>
+    </div>
+
     <div class="muted">如同時填日期及期數，本頁會以 <strong>期數</strong> 優先。</div>
 
     <hr>
@@ -91,6 +112,16 @@
 
   <div class="card" id="resultCard" style="display:none;">
     <h3 style="margin:0;">結果</h3>
+
+    <label class="muted" style="margin-left:12px;">
+      核對範圍：
+      <select id="rangePreset">
+        <option value="60days" selected>近60日</option>
+        <option value="30draws">近30期</option>
+        <option value="60draws">近60期</option>
+      </select>
+    </label>
+
     
     <label class="muted" style="display:inline-flex; align-items:center; gap:8px; margin-top:8px;">
       <input id="halfResult" type="checkbox">
@@ -106,6 +137,15 @@
   <p><a href="/">返回首頁</a></p>
 
 <script>
+  const rangeEl = document.getElementById("rangePreset");
+  
+  const multiModeEl = document.getElementById("multiMode");
+  const multiControlsEl = document.getElementById("multiControls");
+  const multiYearEl = document.getElementById("multiYear");
+  const multiSeqEl = document.getElementById("multiSeq");
+  const multiCountEl = document.getElementById("multiCount");
+  const startDrawNoEl = document.getElementById("startDrawNo");
+
   const gridEl = document.getElementById("grid");
   const inputEl = document.getElementById("input");
   const inputErrEl = document.getElementById("inputErr");
@@ -155,6 +195,58 @@
     }
     yearEl.value=String(nowY);
   })();
+
+  (function initMulti(){
+    const nowY = new Date().getFullYear();
+    for(let y=2002; y<=nowY; y++){
+      const opt=document.createElement("option");
+      opt.value=String(y);
+      opt.textContent=String(y);
+      multiYearEl.appendChild(opt);
+    }
+    multiYearEl.value=String(nowY);
+  
+    // seq dropdown 1..200（夠用）
+    for(let i=1;i<=200;i++){
+      const opt=document.createElement("option");
+      opt.value=String(i);
+      opt.textContent=String(i).padStart(3,"0");
+      multiSeqEl.appendChild(opt);
+    }
+    multiSeqEl.value="1";
+  
+    function buildStartDrawNo(){
+      const y = multiYearEl.value;
+      const s = parseInt(multiSeqEl.value,10);
+      if(!y || !Number.isFinite(s) || s<=0){ startDrawNoEl.value=""; return; }
+      startDrawNoEl.value = `${yyFromYear(y)}/${pad3(s)}`;
+    }
+  
+    multiYearEl.addEventListener("change", buildStartDrawNo);
+    multiSeqEl.addEventListener("change", buildStartDrawNo);
+    buildStartDrawNo();
+  })();
+
+  function setMultiMode(on){
+    multiControlsEl.style.display = on ? "flex" : "none";
+  
+    // disable single inputs
+    drawDateEl.disabled = on;
+    yearEl.disabled = on;
+    seqEl.disabled = on;
+    document.getElementById("clearDraw").disabled = on;
+  
+    if (on) {
+      // 清空單期輸入避免混亂
+      drawDateEl.value="";
+      seqEl.value="";
+      drawNoEl.value="";
+    }
+  }
+  
+  multiModeEl.addEventListener("change", ()=>{
+    setMultiMode(multiModeEl.checked);
+  });
 
   yearEl.addEventListener("change", buildDrawNoFromYearSeq);
   seqEl.addEventListener("input", buildDrawNoFromYearSeq);
@@ -415,15 +507,37 @@
     };
   }
 
-  function buildQuery(){
+  function buildQuery(){      
+    // 多期模式優先
+    if (multiModeEl.checked) {
+      return {
+        multi: true,
+        startDrawNo: startDrawNoEl.value.trim(),
+        multiCount: parseInt(multiCountEl.value, 10),
+      };
+    }
+  
     const drawNo = drawNoEl.value.trim();
     const drawDate = drawDateEl.value;
-
+  
     // drawNo priority if exists
     if(drawNo) return { drawNo };
     if(drawDate) return { drawDate };
-    return {};
+
+    if (rangeEl) {
+      rangeEl.addEventListener("change", ()=>{
+        if(resultCard.style.display !== "none") runCheck();
+      });
+    }
+    
+    multiCountEl.addEventListener("change", ()=>{
+      if(resultCard.style.display !== "none") runCheck();
+    });
+  
+    // 無指定：用 range preset（預設 60days）
+    return { rangePreset: rangeEl ? rangeEl.value : "60days" };
   }
+
 
   function fmtYMD(ymd){
     if(!ymd) return "";
@@ -536,16 +650,24 @@
       if (halfResultEl) halfResultEl.checked = halfEl.checked;
       
       const q = data.query || {};
+      const isMulti = !!data.multiInfo;
       
-      // 無指定期數/日期：只顯示近60日（不顯示最新一期）
-      if(!q.drawNo && !q.drawDate){
-        mainResultEl.innerHTML = "";
+      if (isMulti) {
+        // 多期：只顯示 multiWins
+        mainResultEl.innerHTML = `<div><strong>多期核對：</strong>由 ${data.multiInfo.startDrawNo} 起，共 ${data.multiInfo.checked} 期（設定：${data.multiInfo.count} 期）</div>`;
+        recentBlockEl.innerHTML = renderRecent(data.multiWins || []);
+      } else if (!q.drawNo && !q.drawDate) {
+        // 範圍：只顯示 recentWins（近60日 / 近30期 / 近60期）
+        mainResultEl.innerHTML = data.rangeInfo?.label
+          ? `<div class="muted">核對範圍：${data.rangeInfo.label}</div>`
+          : "";
         recentBlockEl.innerHTML = renderRecent(data.recentWins || []);
       } else {
-        // 有指定期數/日期：顯示該期結果（不顯示近60日）
+        // 指定單期：顯示 main
         mainResultEl.innerHTML = renderMain(data.main);
         recentBlockEl.innerHTML = "";
       }
+
 
     }catch(e){
       statusEl.textContent="";
