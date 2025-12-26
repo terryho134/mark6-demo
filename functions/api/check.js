@@ -201,6 +201,27 @@ async function getDrawsSince(env, fromDate) {
   ).bind(fromDate).all();
 }
 
+async function getLastNDraws(env, n) {
+  return env.DB.prepare(
+    "SELECT drawNo, drawDate, numbers, special FROM draws ORDER BY drawDate DESC LIMIT ?"
+  ).bind(n).all();
+}
+
+async function getDrawsFromDrawNo(env, startDrawNo, n) {
+  const start = await env.DB.prepare(
+    "SELECT drawNo, drawDate FROM draws WHERE drawNo = ? LIMIT 1"
+  ).bind(startDrawNo).first();
+
+  if (!start) return { error: "start draw not found" };
+
+  // 由該期開始（包含該期），按日期由舊到新取 n 期
+  const rows = await env.DB.prepare(
+    "SELECT drawNo, drawDate, numbers, special FROM draws WHERE drawDate >= ? ORDER BY drawDate ASC LIMIT ?"
+  ).bind(start.drawDate, n).all();
+
+  return { startDate: start.drawDate, rows };
+}
+
 function normalizeTicket(body) {
   const type = String(body.type || "").trim(); // single|multiple|banker
   const half = !!body.half; // half stake?
@@ -291,8 +312,24 @@ export async function onRequest({ request, env }) {
   const drawNo = body.drawNo ? String(body.drawNo).trim() : null;
   const drawDate = body.drawDate ? String(body.drawDate).trim() : null;
 
+  const rangePreset = body.rangePreset ? String(body.rangePreset) : "60days"; // 60days|30draws|60draws
+  
+  const multi = !!body.multi;
+  const startDrawNo = body.startDrawNo ? String(body.startDrawNo).trim() : null;
+  const multiCount = body.multiCount ? Number(body.multiCount) : 0;
+
+
   if (drawNo && !isYYXXX(drawNo)) return json(400, { ok: false, error: "drawNo must be YY/XXX e.g. 25/018" });
   if (drawDate && !isYMD(drawDate)) return json(400, { ok: false, error: "drawDate must be YYYY-MM-DD" });
+
+  if (multi) {
+    if (!startDrawNo || !isYYXXX(startDrawNo)) {
+      return json(400, { ok: false, error: "startDrawNo must be YY/XXX e.g. 25/018" });
+    }
+    if (![5,10,20,30].includes(multiCount)) {
+      return json(400, { ok: false, error: "multiCount must be one of 5,10,20,30" });
+    }
+  }
 
   // decide which draw to check
   let targetDraw = null;
@@ -305,29 +342,45 @@ export async function onRequest({ request, env }) {
 
   const main = computeForDraw(ticket, targetDraw);
 
-  // If user did NOT specify drawNo/drawDate, also check last 60 days and return only winning draws
+  // When user did NOT specify drawNo/drawDate and NOT multi-mode, return range results (wins only)
   let recentWins = [];
-  if (!drawNo && !drawDate) {
-    const now = new Date();
-    const from = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-    const fromYMD = from.toISOString().slice(0, 10);
-
-    const rows = await getDrawsSince(env, fromYMD);
-    const list = rows?.results || [];
-
+  let rangeInfo = null;
+  
+  if (!drawNo && !drawDate && !multi) {
+    let list = [];
+  
+    if (rangePreset === "30draws") {
+      const rows = await getLastNDraws(env, 30);
+      list = rows?.results || [];
+      rangeInfo = { preset: "30draws", label: "近30期" };
+    } else if (rangePreset === "60draws") {
+      const rows = await getLastNDraws(env, 60);
+      list = rows?.results || [];
+      rangeInfo = { preset: "60draws", label: "近60期" };
+    } else {
+      // default 60 days
+      const now = new Date();
+      const from = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      const fromYMD = from.toISOString().slice(0, 10);
+  
+      const rows = await getDrawsSince(env, fromYMD);
+      list = rows?.results || [];
+      rangeInfo = { preset: "60days", label: "近60日" };
+    }
+  
     for (const row of list) {
       const r = computeForDraw(ticket, row);
+  
       const hasAny =
         (r.result.units.div1 + r.result.units.div2 + r.result.units.div3 +
          r.result.units.div4 + r.result.units.div5 + r.result.units.div6 + r.result.units.div7) > 0;
-
+  
       if (hasAny) {
-        // keep a lighter payload for recent list
         recentWins.push({
           drawNo: r.draw.drawNo,
           drawDate: r.draw.drawDate,
-          numbers: r.draw.numbers, // ✅ 加入正選
-          extra: r.draw.extra,     // ✅ 加入特別號
+          numbers: r.draw.numbers,
+          extra: r.draw.extra,
           summary: r.result.summary,
           fixedTotal: r.result.fixedAmount.totalFixed,
           topPrizeNote: r.result.topPrizeNote,
@@ -336,11 +389,46 @@ export async function onRequest({ request, env }) {
     }
   }
 
+  let multiWins = [];
+  let multiInfo = null;
+  
+  if (multi) {
+    const r = await getDrawsFromDrawNo(env, startDrawNo, multiCount);
+    if (r.error) return json(404, { ok: false, error: r.error });
+  
+    const list = r.rows?.results || [];
+    multiInfo = { startDrawNo, count: multiCount, startDate: r.startDate, checked: list.length };
+  
+    for (const row of list) {
+      const out = computeForDraw(ticket, row);
+      const hasAny =
+        (out.result.units.div1 + out.result.units.div2 + out.result.units.div3 +
+         out.result.units.div4 + out.result.units.div5 + out.result.units.div6 + out.result.units.div7) > 0;
+  
+      if (hasAny) {
+        multiWins.push({
+          drawNo: out.draw.drawNo,
+          drawDate: out.draw.drawDate,
+          numbers: out.draw.numbers,
+          extra: out.draw.extra,
+          summary: out.result.summary,
+          fixedTotal: out.result.fixedAmount.totalFixed,
+          topPrizeNote: out.result.topPrizeNote,
+        });
+      }
+    }
+  }
+
+  
   return json(200, {
     ok: true,
     query: { drawNo: drawNo || null, drawDate: drawDate || null },
-    main,
+    rangeInfo,      // ✅ 新增
     recentWins,
+    multiInfo,      // ✅ 新增
+    multiWins,      // ✅ 新增
+    main: targetDraw ? computeForDraw(ticket, targetDraw) : null,
     disclaimer: "本工具僅供參考；派彩與結果以官方公佈為準。",
   });
+
 }
