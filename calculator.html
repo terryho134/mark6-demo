@@ -367,37 +367,52 @@
     }
 
     // Sort like: higher total-hit first, and be=1 before be=0 when same total-hit
-    options.sort((a1,a2)=>{
-      const t1 = a1.bw + a1.be;
-      const t2 = a2.bw + a2.be;
-      if(t2!==t1) return t2-t1;
-      if(a2.be!==a1.be) return a2.be-a1.be;
-      return a2.bw-a1.bw;
+    options.sort((a,b)=>{
+      // 1) bw 由大到細
+      if(b.bw !== a.bw) return b.bw - a.bw;
+    
+      // 2) 同 bw：be=1（+特）排前
+      if(b.be !== a.be) return b.be - a.be;
+    
+      return 0;
     });
 
+
     bankerHitEl.innerHTML = "";
+    
+    // ✅ placeholder：未選擇
+    {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "請選擇中膽情況…";
+      bankerHitEl.appendChild(opt);
+    }
+    
     for(const o of options){
       const opt = document.createElement("option");
       opt.value = `${o.bw}|${o.be}`;
       opt.textContent = o.label;
       bankerHitEl.appendChild(opt);
     }
-
-    // keep previous if possible
+    
+    // ✅ 保留上次選擇；否則預設「未選擇」
     const found = options.some(o => `${o.bw}|${o.be}` === prev);
-    bankerHitEl.value = found ? prev : options[0].value;
+    bankerHitEl.value = found ? prev : "";
+
 
     const t = 6 - b;
     bankerHitHintEl.textContent = `每注：${b}膽 + ${t}腳。此下拉式只描述「膽」命中情況，系統會在下表自動列出所有「腳」命中組合。`;
   }
 
   function getBankerHit(){
-    const v = bankerHitEl.value || "0|0";
+    const v = (bankerHitEl.value || "").trim();
+    if(!v) return null; // ✅ 未選
     const [bwS, beS] = v.split("|");
     const bw = parseInt(bwS,10);
     const be = parseInt(beS,10);
     return { bw, be };
   }
+
 
   function calcBetsAndStake(){
     const u = unitStake();
@@ -494,11 +509,18 @@
     // banker
     const b = parseInt(bN.value,10);
     const L = parseInt(lN.value,10);
-    const { bw, be } = getBankerHit();
-
-    // safety: bw+be <= b (always true with our options)
+    const hit = getBankerHit();
+    
+    if(!hit){
+      // ✅ 未選中膽情況：不顯示表格
+      outEl.innerHTML = `<div class="muted">請先選擇「中膽情況」，系統才會列出所有命中情境。</div>`;
+      return;
+    }
+    
+    const { bw, be } = hit;
     rows = listBankerRows(b, L, bw, be, sr);
     outEl.innerHTML = renderRows(rows);
+    return;
   }
 
   // ---------- init ----------
