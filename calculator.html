@@ -67,7 +67,7 @@
         <span class="muted">（總數 7–49；最大值為「全餐」）</span>
       </div>
       <div class="muted" style="margin-top:6px;">
-        提示：膽拖的「中膽情況」選擇已移到下方「所有命中情境」卡內。
+        提示：膽拖的「中膽情況」已移到下方「所有命中情境」卡內。
       </div>
     </div>
 
@@ -84,7 +84,7 @@
   <div class="card">
     <h3 style="margin-top:0;">2) 所有命中情境（只顯示有派彩）</h3>
 
-    <!-- ✅ Banker layer-2 moved here -->
+    <!-- Banker layer2 moved here -->
     <div id="bankerLayer2" class="subcard" style="display:none;">
       <div class="row">
         <span class="pill">膽拖：中膽情況</span>
@@ -105,9 +105,8 @@
 
 <script>
   // ---------- helpers ----------
-  function fmtMoney(n){
-    return "HK$ " + Number(n).toLocaleString("en-US");
-  }
+  function fmtMoney(n){ return "HK$ " + Number(n).toLocaleString("en-US"); }
+
   function choose(n,k){
     if(k<0||n<0||k>n) return 0;
     k=Math.min(k,n-k);
@@ -119,12 +118,7 @@
   const PRIZE = { div4:9600, div5:640, div6:320, div7:40 };
 
   function fixedTotal(units, stakeRatio){
-    const t = (
-      units.div4*PRIZE.div4 +
-      units.div5*PRIZE.div5 +
-      units.div6*PRIZE.div6 +
-      units.div7*PRIZE.div7
-    );
+    const t = units.div4*PRIZE.div4 + units.div5*PRIZE.div5 + units.div6*PRIZE.div6 + units.div7*PRIZE.div7;
     return Math.round(t * stakeRatio);
   }
 
@@ -142,11 +136,10 @@
   }
 
   function hasAnyPrize(units){
-    return (units.div1+units.div2+units.div3+units.div4+units.div5+units.div6+units.div7)>0;
+    return (units.div1+units.div2+units.div3+units.div4+units.div5+units.div6+units.div7) > 0;
   }
 
-  // ---------- scenario calculators (counts-based) ----------
-  // Shared combinatorial formula for (x main hits, y extra hit?, z others)
+  // ---------- scenarios (count-based) ----------
   function unitsFromXYZN(x,y,z){
     const div1 = choose(x, 6);
     const div2 = y * choose(x, 5);
@@ -214,7 +207,6 @@
     return rows;
   }
 
-  // Banker scenario rows: given b, L, chosen bw & be, enumerate lw & le.
   function calcBankerUnitsFromCounts(b, L, bw, be, lw, le){
     const t = 6 - b;
     const lo = L - lw - le;
@@ -243,88 +235,80 @@
     return { units };
   }
 
+  // feasibility filter to hide impossible rows when legs are large (e.g., full meal)
   function isFeasibleBankerCounts(b, L, bw, be, lw, le){
-    const NNB = 49 - b;     // non-banker total
-    const U = NNB - L;      // non-banker NOT picked (outside legs)
-    const remMain = 6 - bw; // winning mains not in bankers
-  
-    // basic bounds for lw
+    const NNB = 49 - b;          // non-banker total
+    const U = NNB - L;           // non-banker NOT picked (outside legs)
+    const remMain = 6 - bw;      // winning mains not in bankers (must be among non-bankers)
+
     if (lw < 0) return false;
     if (lw > Math.min(L, remMain)) return false;
-  
-    const wu = remMain - lw; // winning mains outside legs
+
+    const wu = remMain - lw;     // winning mains outside legs
     if (wu < 0 || wu > U) return false;
-  
+
     if (be === 1) {
-      // extra is in bankers => cannot be in legs
-      if (le !== 0) return false;
-  
-      // non-banker "other" numbers count (excluding remMain)
-      const otherCount = NNB - remMain; // = 43 - b + bw
-      const lo = L - lw;                // legs others
+      if (le !== 0) return false; // extra already in bankers => not in legs
+      const otherCount = NNB - remMain; // other non-bankers besides the remMain winning mains
+      const lo = L - lw;
       if (lo < 0 || lo > otherCount) return false;
-  
       return true;
     }
-  
-    // be === 0 (extra is non-banker): extra is either in legs (le=1) or outside legs (le=0)
+
+    // be === 0
     if (le !== 0 && le !== 1) return false;
-  
-    // if extra not in legs, it must be outside legs -> consumes 1 slot in U
+
     const extraOutside = (le === 0) ? 1 : 0;
-  
-    // ensure U can accommodate winning mains outside legs + maybe extra outside
     if (wu + extraOutside > U) return false;
-  
-    // special: full-meal among non-bankers => U==0 => extra must be in legs (if be==0)
+
+    // if U==0 (full meal among non-bankers), extra cannot be outside legs
     if (U === 0 && le === 0) return false;
-  
-    // non-banker "other" numbers count excluding remMain and extra
-    const otherCount = NNB - remMain - 1; // = 42 - b + bw
+
+    const otherCount = NNB - remMain - 1; // exclude remMain winning mains and the extra
     const lo = L - lw - le;
     if (lo < 0 || lo > otherCount) return false;
-  
+
     return true;
   }
 
+  function describeBankerHit(bw, be){
+    if(bw===0 && be===0) return "沒有中膽";
+    if(bw===0 && be===1) return "命中特別號碼";
+    if(be===1) return `命中${bw}個號碼+特別號碼`;
+    return `命中${bw}個號碼`;
+  }
 
   function listBankerRows(b, L, bw, be, stakeRatio){
     const rows=[];
     const NNB = 49 - b;
     const U = NNB - L;
     const remMain = 6 - bw;
-  
-    // lw bounds from "must fit into U"
+
+    // lw bounds tightened by U
     const lwMin = Math.max(0, remMain - U);
     const lwMax = Math.min(L, remMain);
-  
+
     let leOptions = [];
-    if (be === 1) {
-      leOptions = [0];
-    } else {
-      // if U==0 (full meal in non-bankers), extra cannot be outside legs
-      leOptions = (U === 0) ? [1] : [0,1];
-    }
-  
+    if (be === 1) leOptions = [0];
+    else leOptions = (U === 0) ? [1] : [0,1];
+
     for(let lw = lwMin; lw <= lwMax; lw++){
       for(const le of leOptions){
-  
-        // ✅ new: filter impossible global scenarios
         if(!isFeasibleBankerCounts(b, L, bw, be, lw, le)) continue;
-  
+
         const out = calcBankerUnitsFromCounts(b, L, bw, be, lw, le);
         if(!out) continue;
         if(!hasAnyPrize(out.units)) continue;
-  
+
         const m = bw + lw;
         const e = (be===1 || le===1);
-  
+
         const label = [
           `等效命中：中${m}個正選${e ? " + 特別號" : ""}`,
           `膽：${describeBankerHit(bw, be)}`,
           `腳中${lw}${(be===0 && le===1) ? "（特別號在腳）" : ""}`,
         ].join("｜");
-  
+
         rows.push({
           label,
           units: out.units,
@@ -335,20 +319,6 @@
         });
       }
     }
-  
-    rows.sort((a,b)=>{
-      const getM = (s)=> (s.match(/中(\d+)個正選/)||[])[1] ? Number((s.match(/中(\d+)個正選/)||[])[1]) : 0;
-      const ma=getM(a.label), mb=getM(b.label);
-      if(mb!==ma) return mb-ma;
-      const ea=a.label.includes("特別號")?1:0;
-      const eb=b.label.includes("特別號")?1:0;
-      if(eb!==ea) return eb-ea;
-      return (b.fixed||0)-(a.fixed||0);
-    });
-  
-    return rows;
-  }
-
 
     rows.sort((a,b)=>{
       const getM = (s)=> (s.match(/中(\d+)個正選/)||[])[1] ? Number((s.match(/中(\d+)個正選/)||[])[1]) : 0;
@@ -376,7 +346,6 @@
   const bN = document.getElementById("bN");
   const lN = document.getElementById("lN");
 
-  // moved layer2
   const bankerLayer2 = document.getElementById("bankerLayer2");
   const bankerHitEl = document.getElementById("bankerHit");
   const bankerHitHintEl = document.getElementById("bankerHitHint");
@@ -388,6 +357,9 @@
 
   let type="single";
 
+  function unitStake(){ return halfEl.checked ? 5 : 10; }
+  function stakeRatio(){ return halfEl.checked ? 0.5 : 1; }
+
   function syncPanels(){
     panelSingle.style.display = (type==="single") ? "" : "none";
     panelMultiple.style.display = (type==="multiple") ? "" : "none";
@@ -395,10 +367,6 @@
     bankerLayer2.style.display = (type==="banker") ? "" : "none";
   }
 
-  function unitStake(){ return halfEl.checked ? 5 : 10; }
-  function stakeRatio(){ return halfEl.checked ? 0.5 : 1; }
-
-  // ✅ legs dropdown depends on banker count: L in [7-b, 49-b], max shows (全餐)
   function populateLegOptions(){
     const b = parseInt(bN.value, 10);
     const minL = Math.max(7 - b, 1);
@@ -418,83 +386,67 @@
     lN.value = String(next);
   }
 
-  // ✅ Banker hit dropdown (combined bw+be) built from b
+  // banker hit dropdown combined bw+be, sorted as requested
   // value format: "bw|be"
-  function describeBankerHit(bw, be){
-    if(bw===0 && be===0) return "沒有中膽";
-    if(bw===0 && be===1) return "中特別號碼";
-    if(be===1) return `中${bw}個號碼+特別號碼`;
-    return `中${bw}個號碼`;
-  }
-
   function populateBankerHitOptions(){
     const b = parseInt(bN.value, 10);
     const prev = bankerHitEl.value || "";
 
-    const options = [];
+    const opts = [];
 
     // be=0: bw 0..b
     for(let bw=0; bw<=b; bw++){
-      options.push({ bw, be:0, label: describeBankerHit(bw, 0) });
+      opts.push({ bw, be:0, label: describeBankerHit(bw, 0) });
     }
-    // be=1: bw 0..b-1 (because extra occupies 1 banker slot)
+    // be=1: bw 0..b-1
     for(let bw=0; bw<=Math.max(0, b-1); bw++){
-      options.push({ bw, be:1, label: describeBankerHit(bw, 1) });
+      opts.push({ bw, be:1, label: describeBankerHit(bw, 1) });
     }
 
-    // Sort like: higher total-hit first, and be=1 before be=0 when same total-hit
-    options.sort((a,b)=>{
-      // 1) bw 由大到細
-      if(b.bw !== a.bw) return b.bw - a.bw;
-    
-      // 2) 同 bw：be=1（+特）排前
-      if(b.be !== a.be) return b.be - a.be;
-    
+    // ✅ order: bw desc, within same bw: be=1 first, finally (0,1) before (0,0) naturally
+    opts.sort((a,b2)=>{
+      if(b2.bw !== a.bw) return b2.bw - a.bw;
+      if(b2.be !== a.be) return b2.be - a.be;
       return 0;
     });
 
-
     bankerHitEl.innerHTML = "";
-    
-    // ✅ placeholder：未選擇
+
+    // placeholder: must choose
     {
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = "請選擇中膽情況…";
-      bankerHitEl.appendChild(opt);
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = "請選擇中膽情況…";
+      bankerHitEl.appendChild(o);
     }
-    
-    for(const o of options){
+
+    for(const o of opts){
       const opt = document.createElement("option");
       opt.value = `${o.bw}|${o.be}`;
       opt.textContent = o.label;
       bankerHitEl.appendChild(opt);
     }
-    
-    // ✅ 保留上次選擇；否則預設「未選擇」
-    const found = options.some(o => `${o.bw}|${o.be}` === prev);
+
+    const found = opts.some(o => `${o.bw}|${o.be}` === prev);
     bankerHitEl.value = found ? prev : "";
 
-
     const t = 6 - b;
-    bankerHitHintEl.textContent = `每注：${b}膽 + ${t}腳。此下拉式只描述「膽」命中情況，系統會在下表自動列出所有「腳」命中組合。`;
+    bankerHitHintEl.textContent = `每注：${b}膽 + ${t}腳。此下拉式描述「膽」命中情況；系統會自動列出所有「腳」命中組合（並隱藏不可能出現的列）。`;
   }
 
   function getBankerHit(){
     const v = (bankerHitEl.value || "").trim();
-    if(!v) return null; // ✅ 未選
+    if(!v) return null;
     const [bwS, beS] = v.split("|");
-    const bw = parseInt(bwS,10);
-    const be = parseInt(beS,10);
-    return { bw, be };
+    return { bw: parseInt(bwS,10), be: parseInt(beS,10) };
   }
-
 
   function calcBetsAndStake(){
     const u = unitStake();
-    warnEl.textContent="";
+    warnEl.textContent = "";
 
     let bets=0;
+
     if(type==="single"){
       bets = 1;
     } else if(type==="multiple"){
@@ -515,6 +467,7 @@
         stakePill.textContent = `投注額：—`;
         return null;
       }
+
       bets = choose(L, t);
     }
 
@@ -559,26 +512,27 @@
   function renderAll(){
     syncPanels();
 
-    // keep banker hit options synced with b
     if(type==="banker"){
+      // keep banker dropdown synced with current b
       populateBankerHitOptions();
     }
 
     const betsOk = calcBetsAndStake();
-    if(betsOk===null){ outEl.innerHTML=""; return; }
-
-    const sr = stakeRatio();
-    let rows=[];
-
-    if(type==="single"){
-      rows = listSingleScenarios(sr);
-      outEl.innerHTML = renderRows(rows);
+    if(betsOk === null){
+      outEl.innerHTML = "";
       return;
     }
+
+    const sr = stakeRatio();
+
+    if(type==="single"){
+      outEl.innerHTML = renderRows(listSingleScenarios(sr));
+      return;
+    }
+
     if(type==="multiple"){
       const n = parseInt(mulN.value,10);
-      rows = listMultipleScenarios(n, sr);
-      outEl.innerHTML = renderRows(rows);
+      outEl.innerHTML = renderRows(listMultipleScenarios(n, sr));
       return;
     }
 
@@ -586,17 +540,13 @@
     const b = parseInt(bN.value,10);
     const L = parseInt(lN.value,10);
     const hit = getBankerHit();
-    
+
     if(!hit){
-      // ✅ 未選中膽情況：不顯示表格
       outEl.innerHTML = `<div class="muted">請先選擇「中膽情況」，系統才會列出所有命中情境。</div>`;
       return;
     }
-    
-    const { bw, be } = hit;
-    rows = listBankerRows(b, L, bw, be, sr);
-    outEl.innerHTML = renderRows(rows);
-    return;
+
+    outEl.innerHTML = renderRows(listBankerRows(b, L, hit.bw, hit.be, sr));
   }
 
   // ---------- init ----------
@@ -628,15 +578,15 @@
   // ---------- events ----------
   typeEls.forEach(r=>{
     r.addEventListener("change", ()=>{
-      if(r.checked){
-        type=r.value;
-        // ensure banker dropdowns are valid when switching in
-        if(type==="banker"){
-          populateLegOptions();
-          populateBankerHitOptions();
-        }
-        renderAll();
+      if(!r.checked) return;
+      type = r.value;
+
+      if(type==="banker"){
+        populateLegOptions();
+        populateBankerHitOptions();
       }
+
+      renderAll();
     });
   });
 
@@ -644,13 +594,12 @@
   mulN.addEventListener("change", renderAll);
 
   bN.addEventListener("change", ()=>{
-    populateLegOptions();          // legs range depends on b
-    populateBankerHitOptions();    // banker-hit options depend on b
+    populateLegOptions();
+    populateBankerHitOptions();
     renderAll();
   });
 
   lN.addEventListener("change", renderAll);
-
   bankerHitEl.addEventListener("change", renderAll);
 
   document.getElementById("calc").addEventListener("click", renderAll);
