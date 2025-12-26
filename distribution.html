@@ -49,9 +49,15 @@
     .stickyCol { position: sticky; left: 0; z-index: 3; background:#fafafa; }
     tbody .stickyCol { background:#fff; z-index: 1; font-weight:600; }
 
-    /* cells */
-    .hitMain { background:#ffe26a; font-weight:700; }
-    .hitExtra { background:#ff4d4d; color:#fff; font-weight:800; }
+    /* cells *//* 正選命中：由波色決定 */
+    .hitMain { font-weight:800; color:#fff; }   /* 字白色，易睇 */
+    .c-red   { background:#d32f2f; }
+    .c-blue  { background:#1976d2; }
+    .c-green { background:#2e7d32; }
+    
+    /* 特別號：黃色 */
+    .hitExtra { background:#f9d423; color:#111; font-weight:900; }
+
 
     .small { font-size:11px; color:#666; font-weight:500; display:block; margin-top:1px; }
     .err { color:#b00020; }
@@ -112,6 +118,17 @@
   function pad2(n){ return String(n).padStart(2, "0"); }
   function fmtN(n){ return String(n); } // 1-49 不補零
 
+  const RED = new Set([1,2,7,8,12,13,18,19,23,24,29,30,34,35,40,45,46]);
+  const BLUE = new Set([3,4,9,10,14,15,20,25,26,31,36,37,41,42,47,48]);
+  const GREEN = new Set([5,6,11,16,17,21,22,27,28,32,33,38,39,43,44,49]);
+  
+  function ballColor(n){
+    if (RED.has(n)) return "red";
+    if (BLUE.has(n)) return "blue";
+    return "green";
+  }
+
+
   function fmtYMD(ymd){
     if(!ymd) return "";
     // accept YYYY-MM-DD
@@ -167,10 +184,13 @@
       html += `<td class="stickyCol">${fmtN(n)}</td>`;
 
     for(const c of cols){
-      if(c.extra === n){
+      if (c.extra === n) {
+        // 特別號：黃色
         html += `<td class="hitExtra">${fmtN(n)}</td>`;
-      } else if(c.main.has(n)){
-        html += `<td class="hitMain">${fmtN(n)}</td>`;
+      } else if (c.main.has(n)) {
+        // 正選：按波色上色
+        const cc = ballColor(n);
+        html += `<td class="hitMain c-${cc}">${fmtN(n)}</td>`;
       } else {
         html += `<td></td>`;
       }
