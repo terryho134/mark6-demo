@@ -17,14 +17,27 @@
     .swatch.extra { background:#ff4d4d; border-color:#e53f3f; }
 
     .tableWrap{
-      overflow:auto;
+      overflow-x:auto;      /* 只允許水平捲動 */
+      overflow-y:visible;   /* 垂直不捲 */
       border:1px solid #eee;
       border-radius:10px;
-      max-height: 70vh;
+      max-height:none;      /* 取消高度限制 */
     }
 
+
     table { border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; }
-    th, td { border-bottom:1px solid #eee; border-right:1px solid #eee; padding:6px 8px; font-size:14px; text-align:center; white-space:nowrap; background:#fff; }
+    th, td {
+      border-bottom:1px solid #eee;
+      border-right:1px solid #eee;
+      padding:3px 4px;      /* ✅ 縮細 padding */
+      font-size:12px;       /* ✅ 縮細字 */
+      line-height:1.1;      /* ✅ 行高更緊 */
+      text-align:center;
+      white-space:nowrap;
+      background:#fff;
+      min-width:26px;       /* ✅ 每格最小寬度（你可以再細） */
+    }
+
     th { background:#fafafa; font-weight:600; }
     tr:last-child td { border-bottom:none; }
     th:last-child, td:last-child { border-right:none; }
@@ -40,9 +53,11 @@
     .hitMain { background:#ffe26a; font-weight:700; }
     .hitExtra { background:#ff4d4d; color:#fff; font-weight:800; }
 
-    .small { font-size:12px; color:#666; font-weight:500; display:block; margin-top:2px; }
+    .small { font-size:11px; color:#666; font-weight:500; display:block; margin-top:1px; }
     .err { color:#b00020; }
     code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+    .hitMain, .hitExtra { padding:2px 3px; }
+
   </style>
 </head>
 <body>
