@@ -69,8 +69,6 @@
     .summaryRow td { background:#fafafa; font-weight:600; }
     .summaryLabel { text-align:left; }
     .summaryCell { font-size:12px; }
-    .summaryCell.big { font-weight:800; }
-    .summaryCell.small { font-weight:800; }
 
   </style>
 </head>
@@ -230,7 +228,7 @@
       const total = c.nums.reduce((a,b)=>a+b,0) + c.extra;
       const avg = total / 7;
       const tag = (avg >= 24.5) ? "大" : "小";
-      html += `<td class="summaryCell ${cls}">${tag}</td>`;
+      html += `<td class="summaryCell">${tag}</td>`;
     }
     html += `</tr>`;
 
