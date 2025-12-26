@@ -17,11 +17,16 @@
     .warn { color:#b00020; }
     .ok { color:#0a7a0a; }
     code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+    hr { border:none; border-top:1px solid #eee; margin:14px 0; }
+    .nowrap { white-space: nowrap; }
   </style>
 </head>
 <body>
   <h1>注數及獎金計算機</h1>
-  <p class="muted">用途：輸入下注方式與數量（複式/膽拖），列出「所有命中情境」下各獎項中獎份數，以及四至七獎固定獎金（按全注/半注比例）。頭/二/三獎只顯示份數（派彩浮動）。</p>
+  <p class="muted">
+    輸入下注方式與數量（複式/膽拖），列出「所有命中情境」下各獎項中獎份數，以及四至七獎固定獎金（按全注/半注比例）。
+    頭/二/三獎派彩浮動，本頁只顯示份數提示。
+  </p>
 
   <div class="card">
     <h3 style="margin-top:0;">1) 下注方式</h3>
@@ -36,7 +41,7 @@
       </label>
     </div>
 
-    <hr style="border:none;border-top:1px solid #eee;margin:14px 0;">
+    <hr>
 
     <div id="panelSingle" class="row">
       <span class="muted">單式固定 1 注（6 個號碼）。</span>
@@ -59,12 +64,13 @@
         <label>腳數</label>
         <select id="lN"></select>
 
-        <span class="muted">（總數 ≥ 7）</span>
+        <span class="muted">（總數 7–49）</span>
       </div>
 
       <div style="margin-top:10px; border-top:1px solid #eee; padding-top:10px;">
         <div class="row">
           <span class="pill">第二層：中膽情況</span>
+
           <label>中幾多個正選膽（bw）</label>
           <select id="bw"></select>
 
@@ -78,7 +84,7 @@
       </div>
     </div>
 
-    <hr style="border:none;border-top:1px solid #eee;margin:14px 0;">
+    <hr>
 
     <div class="row">
       <span class="pill" id="betsPill">注數：—</span>
@@ -100,7 +106,6 @@
 
 <script>
   // ---------- helpers ----------
-  function pad2(x){ return String(x).padStart(2,"0"); }
   function fmtMoney(n){
     return "HK$ " + Number(n).toLocaleString("en-US");
   }
@@ -142,9 +147,8 @@
   }
 
   // ---------- scenario calculators (counts-based) ----------
-  // Single ticket: pick size = 6. Scenario defined by (x main hits, y extra hit?)
+  // Shared combinatorial formula for (x main hits, y extra hit?, z others)
   function unitsFromXYZN(x,y,z){
-    // same as your calcMultipleUnits combinatorial formula
     const div1 = choose(x, 6);
     const div2 = y * choose(x, 5);
     const div3 = choose(x, 5) * choose(z, 1);
@@ -161,8 +165,7 @@
     for(let x=0;x<=6;x++){
       for(let y=0;y<=1;y++){
         if(x+y>6) continue;
-        // if x==6, y must be 0 (single has only 6 numbers; extra is not among main)
-        if(x===6 && y===1) continue;
+        if(x===6 && y===1) continue; // extra cannot be among 6 picked
         const z = n - x - y;
         const units = unitsFromXYZN(x,y,z);
         if(!hasAnyPrize(units)) continue;
@@ -173,15 +176,14 @@
           label: `命中：中${m}個正選${e ? " + 特別號" : ""}`,
           units,
           fixed: fixedTotal(units, stakeRatio),
-          topNote: (units.div1+units.div2+units.div3)>0 ? "頭/二/三獎派彩浮動" : ""
+          topNote: (units.div1+units.div2+units.div3)>0 ? "頭/二/三獎派彩屬浮動（以官方 Unit Prize 為準）" : ""
         });
       }
     }
-    // sort by strongest first
+    // strongest first
     rows.sort((a,b)=>{
-      const ta=(a.units.div1||0)*1000000+(a.units.div2||0)*10000+(a.units.div3||0)*100+(a.fixed||0);
-      const tb=(b.units.div1||0)*1000000+(b.units.div2||0)*10000+(b.units.div3||0)*100+(b.fixed||0);
-      return tb-ta;
+      const score = (r)=> (r.units.div1*1e9 + r.units.div2*1e7 + r.units.div3*1e5 + r.fixed);
+      return score(b)-score(a);
     });
     return rows;
   }
@@ -191,7 +193,7 @@
     for(let x=0;x<=Math.min(6,n);x++){
       for(let y=0;y<=1;y++){
         if(x+y>n) continue;
-        if(x===6 && y===1) continue; // cannot pick extra in a 6-of-6 perfect match scenario
+        if(x===6 && y===1) continue;
         const z = n - x - y;
         const units = unitsFromXYZN(x,y,z);
         if(!hasAnyPrize(units)) continue;
@@ -201,38 +203,38 @@
           label:`命中：中${m}個正選${e ? " + 特別號" : ""}`,
           units,
           fixed: fixedTotal(units, stakeRatio),
-          topNote: (units.div1+units.div2+units.div3)>0 ? "頭/二/三獎派彩浮動" : ""
+          topNote: (units.div1+units.div2+units.div3)>0 ? "頭/二/三獎派彩屬浮動（以官方 Unit Prize 為準）" : ""
         });
       }
     }
     rows.sort((a,b)=>{
-      // prefer higher m then extra then fixed
-      const scoreA = (a.label.includes("中6")?600: a.label.includes("中5")?500: a.label.includes("中4")?400: a.label.includes("中3")?300:0) + (a.label.includes("特別號")?1:0);
-      const scoreB = (b.label.includes("中6")?600: b.label.includes("中5")?500: b.label.includes("中4")?400: b.label.includes("中3")?300:0) + (b.label.includes("特別號")?1:0);
-      if(scoreB!==scoreA) return scoreB-scoreA;
+      const getM = (s)=> (s.match(/中(\d+)個正選/)||[])[1] ? Number((s.match(/中(\d+)個正選/)||[])[1]) : 0;
+      const ma=getM(a.label), mb=getM(b.label);
+      if(mb!==ma) return mb-ma;
+      const ea=a.label.includes("特別號")?1:0;
+      const eb=b.label.includes("特別號")?1:0;
+      if(eb!==ea) return eb-ea;
       return (b.fixed||0)-(a.fixed||0);
     });
     return rows;
   }
 
-  // Banker ticket scenario rows: given b, L, chosen bw & be, enumerate lw & le.
-  // Uses the same counting logic as your calcBankerUnits, but driven by counts (bw/be/lw/le/lo).
+  // Banker scenario rows: given b, L, chosen bw & be, enumerate lw & le.
   function calcBankerUnitsFromCounts(b, L, bw, be, lw, le){
     const t = 6 - b;
     const lo = L - lw - le;
     if(lo < 0) return null;
 
-    const chances = choose(L, t);
     const units = { div1:0, div2:0, div3:0, div4:0, div5:0, div6:0, div7:0 };
 
+    // sum over selecting k winning legs, u extra leg (0/1), r other legs
     for(let k=0; k<=Math.min(lw, t); k++){
       for(let u=0; u<=Math.min(le, t-k); u++){
         const r = t - k - u;
         if(r<0 || r>lo) continue;
 
-        const m = bw + k;              // matched main in this chance
-        const e = (be===1) ? 1 : u;    // extra included?
-
+        const m = bw + k;
+        const e = (be===1) ? 1 : u;
         const ways = choose(lw, k) * choose(le, u) * choose(lo, r);
 
         if(m===6) units.div1 += ways;
@@ -245,30 +247,25 @@
       }
     }
 
-    return { units, chances };
+    return { units };
   }
 
   function listBankerRows(b, L, bw, be, stakeRatio){
     const rows=[];
     const t = 6 - b;
 
-    // feasibility: bw + be <= b (bankers have b slots)
+    // feasibility: bw + be <= b (bankers have b slots: winning mains + extra-in-banker)
     if(bw + be > b) return rows;
 
-    // lw max cannot exceed remaining winning mains: 6 - bw
     const lwMax = Math.min(L, 6 - bw);
-
-    // le can be 1 only if be==0, and L must allow it
     const leOptions = (be===1) ? [0] : [0,1];
 
     for(let lw=0; lw<=lwMax; lw++){
       for(const le of leOptions){
         if(lw + le > L) continue;
 
-        // if le=1, that means extra is in legs, leaving fewer slots for other types - already handled by lo calc
         const out = calcBankerUnitsFromCounts(b, L, bw, be, lw, le);
         if(!out) continue;
-
         if(!hasAnyPrize(out.units)) continue;
 
         const m = bw + lw;
@@ -284,12 +281,11 @@
           label,
           units: out.units,
           fixed: fixedTotal(out.units, stakeRatio),
-          topNote: (out.units.div1+out.units.div2+out.units.div3)>0 ? "頭/二/三獎派彩浮動" : ""
+          topNote: (out.units.div1+out.units.div2+out.units.div3)>0 ? "頭/二/三獎派彩屬浮動（以官方 Unit Prize 為準）" : ""
         });
       }
     }
 
-    // sort: higher m first, then with extra, then fixed
     rows.sort((a,b)=>{
       const getM = (s)=> (s.match(/中(\d+)個正選/)||[])[1] ? Number((s.match(/中(\d+)個正選/)||[])[1]) : 0;
       const ma=getM(a.label), mb=getM(b.label);
@@ -326,6 +322,153 @@
 
   let type="single";
 
+  function syncPanels(){
+    panelSingle.style.display = (type==="single") ? "" : "none";
+    panelMultiple.style.display = (type==="multiple") ? "" : "none";
+    panelBanker.style.display = (type==="banker") ? "" : "none";
+  }
+
+  function unitStake(){ return halfEl.checked ? 5 : 10; }
+  function stakeRatio(){ return halfEl.checked ? 0.5 : 1; }
+
+  // ✅ legs dropdown depends on banker count: L in [7-b, 49-b], max shows (全餐)
+  function populateLegOptions(){
+    const b = parseInt(bN.value, 10);
+    const minL = Math.max(7 - b, 1);
+    const maxL = 49 - b;
+
+    const prev = parseInt(lN.value || "0", 10);
+    lN.innerHTML = "";
+
+    for(let L=minL; L<=maxL; L++){
+      const opt = document.createElement("option");
+      opt.value = String(L);
+      opt.textContent = (L === maxL) ? `${L}（全餐）` : String(L);
+      lN.appendChild(opt);
+    }
+
+    const next = (prev >= minL && prev <= maxL) ? prev : minL;
+    lN.value = String(next);
+  }
+
+  // bw options depend on b and be (if extra is in bankers, only b-1 banker slots remain for winning mains)
+  function syncBankerBWOptions(){
+    const b = parseInt(bN.value,10);
+    const be = parseInt(beEl.value,10);
+    const maxBW = be===1 ? (b-1) : b;
+
+    const current = parseInt(bwEl.value||"0",10);
+    bwEl.innerHTML="";
+
+    for(let bw=0; bw<=maxBW; bw++){
+      const opt=document.createElement("option");
+      opt.value=String(bw);
+      opt.textContent=String(bw);
+      bwEl.appendChild(opt);
+    }
+    bwEl.value = String(Math.min(current, maxBW));
+  }
+
+  function calcBetsAndStake(){
+    const u = unitStake();
+    warnEl.textContent="";
+
+    let bets=0;
+    if(type==="single"){
+      bets = 1;
+    } else if(type==="multiple"){
+      const n = parseInt(mulN.value,10);
+      bets = choose(n,6);
+      mulHint.textContent = `注數 = C(${n},6) = ${bets.toLocaleString("en-US")}`;
+      if(n>=25){
+        warnEl.innerHTML = `<span class="warn">提示：</span>複式 ${n} 個號碼的注數較大，投注額會非常高。`;
+      }
+    } else {
+      const b = parseInt(bN.value,10);
+      const L = parseInt(lN.value,10);
+      const t = 6 - b;
+
+      // legs options already enforce b+L in [7..49], but keep safe
+      if(b + L < 7 || b + L > 49){
+        warnEl.innerHTML = `<span class="warn">錯誤：</span>膽+腳必須介乎 7–49。`;
+        betsPill.textContent = `注數：—`;
+        stakePill.textContent = `投注額：—`;
+        return null;
+      }
+
+      bets = choose(L, t);
+      bankerHint.textContent = `每注：${b}膽 + ${t}腳｜注數 = C(${L},${t}) = ${bets.toLocaleString("en-US")}`;
+    }
+
+    betsPill.textContent = `注數：${bets.toLocaleString("en-US")}`;
+    stakePill.textContent = `投注額：${fmtMoney(bets*u)}`;
+    return bets;
+  }
+
+  function renderRows(rows){
+    if(!rows || rows.length===0){
+      return `<div class="muted">在目前設定下，未有任何「有派彩」的命中情境（或參數不合理）。</div>`;
+    }
+
+    const trs = rows.map(r=>{
+      const unitsText = summarizeUnits(r.units) || "—";
+
+      // fixed: show dash if 0 (e.g. top prizes only)
+      const fixedText = (r.fixed && r.fixed > 0) ? fmtMoney(r.fixed) : "—";
+      const note = r.topNote ? `<div class="muted" style="margin-top:4px;">${r.topNote}</div>` : "";
+
+      return `
+        <tr>
+          <td style="width:38%"><strong>${r.label}</strong></td>
+          <td style="width:40%">${unitsText}</td>
+          <td class="nowrap" style="width:22%">${fixedText}${note}</td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th>命中情境</th>
+            <th>中獎份數</th>
+            <th>固定獎金</th>
+          </tr>
+        </thead>
+        <tbody>${trs}</tbody>
+      </table>
+    `;
+  }
+
+  function renderAll(){
+    syncPanels();
+    const betsOk = calcBetsAndStake();
+    if(betsOk===null){ outEl.innerHTML=""; return; }
+
+    const sr = stakeRatio();
+    let rows=[];
+
+    if(type==="single"){
+      rows = listSingleScenarios(sr);
+      outEl.innerHTML = renderRows(rows);
+      return;
+    }
+    if(type==="multiple"){
+      const n = parseInt(mulN.value,10);
+      rows = listMultipleScenarios(n, sr);
+      outEl.innerHTML = renderRows(rows);
+      return;
+    }
+
+    const b = parseInt(bN.value,10);
+    const L = parseInt(lN.value,10);
+    const be = parseInt(beEl.value,10);
+    const bw = parseInt(bwEl.value,10);
+
+    rows = listBankerRows(b, L, bw, be, sr);
+    outEl.innerHTML = renderRows(rows);
+  }
+
   (function init(){
     // multiple n 7..49
     for(let n=7;n<=49;n++){
@@ -345,141 +488,11 @@
     }
     bN.value="2";
 
-    // legs L 1..49 (we will enforce b+L>=7)
-    for(let L=1;L<=49;L++){
-      const opt=document.createElement("option");
-      opt.value=String(L);
-      opt.textContent=String(L);
-      lN.appendChild(opt);
-    }
-    lN.value="5"; // b=2 => 2+5=7 ok
+    populateLegOptions();     // ✅ depends on b
+    syncBankerBWOptions();    // ✅ depends on b + be
 
-    syncBankerBWOptions();
     renderAll();
   })();
-
-  function syncPanels(){
-    panelSingle.style.display = (type==="single") ? "" : "none";
-    panelMultiple.style.display = (type==="multiple") ? "" : "none";
-    panelBanker.style.display = (type==="banker") ? "" : "none";
-  }
-
-  function unitStake(){
-    return halfEl.checked ? 5 : 10;
-  }
-  function stakeRatio(){
-    return halfEl.checked ? 0.5 : 1;
-  }
-
-  function syncBankerBWOptions(){
-    const b = parseInt(bN.value,10);
-    const be = parseInt(beEl.value,10);
-    const maxBW = be===1 ? (b-1) : b; // if extra is in bankers, only b-1 slots remain for winning mains
-    const current = parseInt(bwEl.value||"0",10);
-
-    bwEl.innerHTML="";
-    for(let bw=0; bw<=maxBW; bw++){
-      const opt=document.createElement("option");
-      opt.value=String(bw);
-      opt.textContent=String(bw);
-      bwEl.appendChild(opt);
-    }
-    bwEl.value = String(Math.min(current, maxBW));
-  }
-
-  function calcBetsAndStake(){
-    const u = unitStake();
-    warnEl.textContent="";
-    let bets=0;
-
-    if(type==="single"){
-      bets = 1;
-    } else if(type==="multiple"){
-      const n = parseInt(mulN.value,10);
-      bets = choose(n,6);
-      if(n>=25){
-        warnEl.innerHTML = `<span class="warn">提示：</span>複式 ${n} 個號碼的注數較大，顯示仍然正常但金額會好高。`;
-      }
-      mulHint.textContent = `注數 = C(${n},6) = ${bets.toLocaleString("en-US")}`;
-    } else {
-      const b = parseInt(bN.value,10);
-      const L = parseInt(lN.value,10);
-      const t = 6 - b;
-      if(b + L < 7){
-        warnEl.innerHTML = `<span class="warn">錯誤：</span>膽+腳需要至少 7 個。`;
-        betsPill.textContent = `注數：—`;
-        stakePill.textContent = `投注額：—`;
-        return null;
-      }
-      bets = choose(L, t);
-      bankerHint.textContent = `每注：${b}膽 + ${t}腳｜注數 = C(${L},${t}) = ${bets.toLocaleString("en-US")}`;
-    }
-
-    betsPill.textContent = `注數：${bets.toLocaleString("en-US")}`;
-    stakePill.textContent = `投注額：${fmtMoney(bets*u)}`;
-    return bets;
-  }
-
-  function renderAll(){
-    syncPanels();
-    const betsOk = calcBetsAndStake();
-    if(betsOk===null) { outEl.innerHTML=""; return; }
-
-    const sr = stakeRatio();
-    let rows=[];
-
-    if(type==="single"){
-      rows = listSingleScenarios(sr);
-      outEl.innerHTML = renderRows(rows);
-      return;
-    }
-
-    if(type==="multiple"){
-      const n = parseInt(mulN.value,10);
-      rows = listMultipleScenarios(n, sr);
-      outEl.innerHTML = renderRows(rows);
-      return;
-    }
-
-    // banker
-    const b = parseInt(bN.value,10);
-    const L = parseInt(lN.value,10);
-    const be = parseInt(beEl.value,10);
-    const bw = parseInt(bwEl.value,10);
-
-    // enforce be=1 implies bw<=b-1 already via dropdown
-    rows = listBankerRows(b, L, bw, be, sr);
-    outEl.innerHTML = renderRows(rows);
-  }
-
-  function renderRows(rows){
-    if(!rows || rows.length===0){
-      return `<div class="muted">在目前設定下，未有任何「有派彩」的命中情境（或參數不合理）。</div>`;
-    }
-
-    const trs = rows.map(r=>{
-      const fixed = r.fixed ? `｜固定獎金 ${fmtMoney(r.fixed)}` : "";
-      const note = r.topNote ? `｜${r.topNote}` : "";
-      return `
-        <tr>
-          <td style="width:38%"><strong>${r.label}</strong></td>
-          <td>${summarizeUnits(r.units)}${fixed}${note}</td>
-        </tr>
-      `;
-    }).join("");
-
-    return `
-      <table>
-        <thead>
-          <tr>
-            <th>命中情境</th>
-            <th>中獎份數／固定獎金</th>
-          </tr>
-        </thead>
-        <tbody>${trs}</tbody>
-      </table>
-    `;
-  }
 
   // events
   typeEls.forEach(r=>{
@@ -492,22 +505,12 @@
   mulN.addEventListener("change", renderAll);
 
   bN.addEventListener("change", ()=>{
-    // ensure b+L>=7 (adjust legs if needed)
-    const b = parseInt(bN.value,10);
-    const L = parseInt(lN.value,10);
-    if(b + L < 7) lN.value = String(7 - b);
+    populateLegOptions();    // ✅ rebuild legs range + (全餐)
     syncBankerBWOptions();
     renderAll();
   });
 
-  lN.addEventListener("change", ()=>{
-    const b = parseInt(bN.value,10);
-    const L = parseInt(lN.value,10);
-    if(b + L < 7){
-      lN.value = String(7 - b);
-    }
-    renderAll();
-  });
+  lN.addEventListener("change", renderAll);
 
   beEl.addEventListener("change", ()=>{
     syncBankerBWOptions();
