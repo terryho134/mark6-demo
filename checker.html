@@ -11,7 +11,7 @@
     .muted { color:#666; font-size:14px; }
     .error { color:#b00020; }
     .ok { color:#0a7a0a; }
-    input, select, button { padding:8px 10px; }
+    input[type="checkbox"]{ padding:0; width:18px; height:18px; }
     .grid { display:grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap:6px; }
     .nbtn { padding:8px 0; border:1px solid #ddd; border-radius:10px; background:#fff; cursor:pointer; }
     .nbtn.on { background:#111; color:#fff; border-color:#111; }
@@ -492,7 +492,15 @@
     if(!ok) return;
 
     statusEl.textContent="核對中…";
-    resultCard.style.display="none";
+    
+    // 先顯示結果卡（確保你一定睇到 halfResult）
+    resultCard.style.display = "block";
+    if (halfResultEl) halfResultEl.checked = halfEl.checked;
+    
+    // 顯示 loading 文字
+    mainResultEl.innerHTML = `<div class="muted">核對中…</div>`;
+    recentBlockEl.innerHTML = "";
+
 
     const payload = Object.assign({}, ticketPayload(), buildQuery());
 
@@ -506,9 +514,12 @@
 
       if(!res.ok || !data.ok){
         statusEl.textContent="";
-        inputErrEl.textContent = data.error || ("HTTP " + res.status);
+        const msg = data.error || ("HTTP " + res.status);
+        inputErrEl.textContent = msg;
+        mainResultEl.innerHTML = `<div class="error">核對失敗：${msg}</div>`;
         return;
       }
+
 
       statusEl.textContent="";
       resultCard.style.display="block";
