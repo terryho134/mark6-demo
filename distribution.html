@@ -168,9 +168,9 @@
 
     for(const c of cols){
       if(c.extra === n){
-        html += `<td class="hitExtra">${fmtN2(n)}</td>`;
+        html += `<td class="hitExtra">${fmtN(n)}</td>`;
       } else if(c.main.has(n)){
-        html += `<td class="hitMain">${fmtN2(n)}</td>`;
+        html += `<td class="hitMain">${fmtN(n)}</td>`;
       } else {
         html += `<td></td>`;
       }
