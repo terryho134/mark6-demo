@@ -602,6 +602,11 @@
     const d = main.draw;
     const t = main.ticket;
     const r = main.result;
+    const hit = r.bestHit;
+    const hitText = hit
+      ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
+      : "";
+
 
     const fixed = r.fixedAmount;
     const lines = [];
@@ -613,8 +618,18 @@
 
     if(r.summary.length===0){
       lines.push(`<div style="margin-top:10px;"><strong>結果：</strong>未中獎</div>`);
+    
+      if (hit && !(hit.main <= 2 && !hit.extra)) {
+        lines.push(`<div class="muted" style="margin-top:6px;">${hitText}（未中獎）</div>`);
+      }
+
+      if (hit) {
+        lines.push(`<div class="muted" style="margin-top:6px;">${hitText}</div>`);
+      }
+      
       return lines.join("");
     }
+
 
     const summaryText = r.summary.map(x=>`${x.name} × ${x.units.toLocaleString("en-US")}`).join("，");
     lines.push(`<div style="margin-top:10px;"><strong>中獎：</strong>${summaryText}</div>`);
@@ -650,6 +665,12 @@
       const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
       const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
   
+      // ✅ hit text (best hit for this draw)
+      const hit = w.bestHit;
+      const hitText = hit
+        ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
+        : "";
+  
       const nums = (w.numbers && w.numbers.length)
         ? `正選：${w.numbers.join(" ")}　特別號：${String(w.extra).padStart(2,"0")}`
         : "";
@@ -657,6 +678,7 @@
       return `
         <li style="margin:10px 0;">
           <div><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</div>
+          ${hitText ? `<div class="muted">${hitText}</div>` : ""}
           ${nums ? `<div class="muted">${nums}</div>` : ""}
         </li>
       `;
@@ -664,6 +686,7 @@
   
     return `<h4 style="margin:0 0 8px;">${title}</h4><ol>${items}</ol>`;
   }
+
 
 
   async function runCheck(){
