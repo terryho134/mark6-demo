@@ -300,14 +300,22 @@
         if(!out) continue;
         if(!hasAnyPrize(out.units)) continue;
 
+        function describeLegHit(lw, le){
+          if(lw===0 && le===0) return "沒有命中";
+          if(lw===0 && le===1) return "命中特別號碼";
+          if(lw>0 && le===1) return `命中${lw}個號碼+特別號碼`;
+          return `命中${lw}個號碼`;
+        }
+
         const m = bw + lw;
         const e = (be===1 || le===1);
-
+        
         const label = [
-          `等效命中：中${m}個正選${e ? " + 特別號" : ""}`,
+          `命中：中${m}個正選${e ? " + 特別號" : ""}`,   // ✅ 移除「等效」兩字
           `膽：${describeBankerHit(bw, be)}`,
-          `腳中${lw}${(be===0 && le===1) ? "（特別號在腳）" : ""}`,
+          `腳：${describeLegHit(lw, le)}`,                // ✅ 新格式
         ].join("｜");
+
 
         rows.push({
           label,
