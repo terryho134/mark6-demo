@@ -57,6 +57,8 @@
     .err { color:#b00020; }
     code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
     .hitMain, .hitExtra { padding:2px 3px; }
+    .hitMain { font-weight: 700; }
+    .hitExtra { font-weight: 800; }
 
   </style>
 </head>
@@ -163,15 +165,15 @@
       html += "<tr>";
       html += `<td class="stickyCol">${pad2(n)}</td>`;
 
-      for(const c of cols){
-        if(c.extra === n){
-          html += `<td class="hitExtra">★</td>`;
-        } else if(c.main.has(n)){
-          html += `<td class="hitMain">●</td>`;
-        } else {
-          html += `<td></td>`;
-        }
+    for(const c of cols){
+      if(c.extra === n){
+        html += `<td class="hitExtra">${pad2(n)}</td>`;
+      } else if(c.main.has(n)){
+        html += `<td class="hitMain">${pad2(n)}</td>`;
+      } else {
+        html += `<td></td>`;
       }
+    }
 
       html += "</tr>";
     }
