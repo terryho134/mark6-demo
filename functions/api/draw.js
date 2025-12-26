@@ -4,7 +4,7 @@ export async function onRequestGet({ request, env }) {
     const limitRaw = url.searchParams.get("limit") || "10";
     let limit = parseInt(limitRaw, 10);
     if (!Number.isFinite(limit) || limit <= 0) limit = 10;
-    limit = Math.min(limit, 120); // 避免一次過太大
+    limit = Math.min(limit, 120); // 避免一次過太大!
 
     const q = `
       SELECT drawNo, drawDate, numbers, special
