@@ -109,17 +109,28 @@
   }
 
   function buildRankMaps(items){
-    // total 的 Top10/Bottom10：按 total 排序
-    const byTotalDesc = [...items].sort((a,b)=> b.total - a.total || a.n - b.n);
-    const top = byTotalDesc.slice(0,10).map(x=>x.n);
-    const bottom = [...byTotalDesc].slice(-10).sort((a,b)=> a.total - b.total || a.n - b.n).map(x=>x.n);
-
-    const topRank = new Map();    // n -> 0..9（0最深）
-    const bottomRank = new Map(); // n -> 0..9（0最深）
-    top.forEach((n,i)=> topRank.set(n,i));
-    bottom.forEach((n,i)=> bottomRank.set(n,i));
-    return { topRank, bottomRank };
+    function ranksFor(key){
+      const desc = [...items].sort((a,b)=> (b[key] - a[key]) || (a.n - b.n));
+      const top = desc.slice(0,10).map(x=>x.n);
+      const bottom = [...desc].slice(-10).sort((a,b)=> (a[key] - b[key]) || (a.n - b.n)).map(x=>x.n);
+  
+      const topRank = new Map();    // n -> 0..9（0最深）
+      const bottomRank = new Map(); // n -> 0..9（0最深）
+      top.forEach((n,i)=> topRank.set(n,i));
+      bottom.forEach((n,i)=> bottomRank.set(n,i));
+      return { topRank, bottomRank };
+    }
+  
+    return {
+      total: ranksFor("total"),
+      r100:  ranksFor("r100"),
+      r50:   ranksFor("r50"),
+      r30:   ranksFor("r30"),
+      r20:   ranksFor("r20"),
+      r10:   ranksFor("r10"),
+    };
   }
+
 
   function sortItems(items){
     if (!sortKey) return items;
@@ -149,7 +160,7 @@
     const items = raw.items || [];
     const maxGap = Math.max(...items.map(x => (x.gap == null ? 0 : x.gap)));
 
-    const { topRank, bottomRank } = buildRankMaps(items);
+    const ranks = buildRankMaps(items);
 
     buildHeader(raw.totalDraws);
 
@@ -171,23 +182,40 @@
 
       // 3) 總次數（Top10 紅 / Bottom10 藍，10級）
       const tdTotal = tdText(String(it.total));
-      if (topRank.has(it.n)) {
-        const i = topRank.get(it.n); // 0..9
+      if (ranks.total.topRank.has(it.n)) {
+        const i = ranks.total.topRank.get(it.n);
         tdTotal.style.background = RED_10[i];
         tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
-      } else if (bottomRank.has(it.n)) {
-        const i = bottomRank.get(it.n); // 0..9
+      } else if (ranks.total.bottomRank.has(it.n)) {
+        const i = ranks.total.bottomRank.get(it.n);
         tdTotal.style.background = BLUE_10[i];
         tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
       }
+
       tr.appendChild(tdTotal);
 
-      // 4-8) 近期欄（暫時唔上色）
-      tr.appendChild(tdText(String(it.r100)));
-      tr.appendChild(tdText(String(it.r50)));
-      tr.appendChild(tdText(String(it.r30)));
-      tr.appendChild(tdText(String(it.r20)));
-      tr.appendChild(tdText(String(it.r10)));
+      function tdHeat(key, val){
+        const td = tdText(String(val));
+        const rk = ranks[key];
+      
+        if (rk.topRank.has(it.n)) {
+          const i = rk.topRank.get(it.n);
+          td.style.background = RED_10[i];
+          td.style.color = (i <= 5) ? "#fff" : "#111";
+        } else if (rk.bottomRank.has(it.n)) {
+          const i = rk.bottomRank.get(it.n);
+          td.style.background = BLUE_10[i];
+          td.style.color = (i <= 5) ? "#fff" : "#111";
+        }
+        return td;
+      }
+      
+      tr.appendChild(tdHeat("r100", it.r100));
+      tr.appendChild(tdHeat("r50",  it.r50));
+      tr.appendChild(tdHeat("r30",  it.r30));
+      tr.appendChild(tdHeat("r20",  it.r20));
+      tr.appendChild(tdHeat("r10",  it.r10));
+
 
       tbody.appendChild(tr);
     }
