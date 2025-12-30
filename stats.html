@@ -18,6 +18,18 @@
     .thBtn .arrow { font-size:12px; color:#666; }
     .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:13px; }
     .tableWrap { overflow:auto; border:1px solid #eee; border-radius:10px; max-height: 80vh; }
+    .chips { display:flex; flex-wrap:wrap; gap:10px; }
+    .chip {
+      border:1px solid #eee;
+      border-radius:12px;
+      padding:8px 10px;
+      min-width:72px;
+      text-align:center;
+      background:#fff;
+    }
+    .chip .n { font-size:16px; font-weight:800; line-height:1.1; }
+    .chip .sub { font-size:12px; color:#666; margin-top:4px; }
+
   </style>
 </head>
 <body>
@@ -28,6 +40,20 @@
     <div class="row">
       <span class="pill" id="totalPill">總期數：—</span>
       <span class="muted" id="hint"></span>
+    </div>
+
+    <div class="row" style="gap:12px; margin-top:12px;">
+      <div class="card" style="flex:1; min-width:260px;">
+        <h3 style="margin:0 0 8px;">10個最耐未開號碼</h3>
+        <div class="muted" style="margin-bottom:10px;">以 gap（相隔期數）由大到小排列</div>
+        <div id="overdueList" class="chips"></div>
+      </div>
+    
+      <div class="card" style="flex:1; min-width:260px;">
+        <h3 style="margin:0 0 8px;">近10期開得最多的號碼</h3>
+        <div class="muted" style="margin-bottom:10px;">如有並列，會同時顯示</div>
+        <div id="hot10List" class="chips"></div>
+      </div>
     </div>
 
     <div class="tableWrap" style="margin-top:12px;">
@@ -153,6 +179,43 @@
     });
   }
 
+  function renderSummaryCards(items){
+    const overdueEl = document.getElementById("overdueList");
+    const hotEl = document.getElementById("hot10List");
+    if (!overdueEl || !hotEl) return;
+  
+    // 1) 10個最耐未開：gap 最大 10 個
+    const overdue = [...items]
+      .filter(x => x.gap != null)
+      .sort((a,b)=> (b.gap - a.gap) || (a.n - b.n))
+      .slice(0, 10);
+  
+    overdueEl.innerHTML = overdue.map(x => `
+      <div class="chip">
+        <div class="n">${x.n}</div>
+        <div class="sub">gap ${x.gap}</div>
+      </div>
+    `).join("");
+  
+    // 2) 近10期最多：找 r10 最大值，顯示所有並列
+    const max10 = Math.max(...items.map(x => Number(x.r10 || 0)));
+    const hot = items
+      .filter(x => Number(x.r10 || 0) === max10 && max10 > 0)
+      .sort((a,b)=> a.n - b.n);
+  
+    if (max10 <= 0 || hot.length === 0){
+      hotEl.innerHTML = `<div class="muted">近10期未有資料或全部為 0。</div>`;
+    } else {
+      hotEl.innerHTML = hot.map(x => `
+        <div class="chip">
+          <div class="n">${x.n}</div>
+          <div class="sub">開 ${x.r10} 次</div>
+        </div>
+      `).join("");
+    }
+  }
+
+
   function render(){
     errEl.textContent = "";
     if (!raw) return;
@@ -242,6 +305,7 @@
 
       raw = data;
       totalPill.textContent = `總期數：${data.totalDraws.toLocaleString("en-US")}`;
+      renderSummaryCards(data.items || []);
       render();
     } catch(e){
       errEl.textContent = "載入失敗：" + e.message;
