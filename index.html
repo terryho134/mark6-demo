@@ -109,6 +109,20 @@
   return `${m[1]}年${m[2]}月${m[3]}日`;
 }
 
+  function formatJackpotMillion(million){
+    const m = Number(million);
+    if (!Number.isFinite(m) || m <= 0) return "—";
+  
+    if (m >= 100) {
+      const yi = m / 100; // 100百萬 = 1億
+      if (Number.isInteger(yi)) return `約 HK$ ${yi} 億`;
+      return `約 HK$ ${yi.toFixed(1).replace(/\.0$/, "")} 億`;
+    }
+  
+    return `約 HK$ ${m.toLocaleString("en-US")} 百萬`;
+  }
+
+
   function renderNext(data){
     const nextEl = document.getElementById("next");
     nextEl.classList.remove("loading");
@@ -133,7 +147,7 @@
           <div><strong>估計頭獎基金：</strong>
             ${
               jackpotM !== ""
-                ? `約 HK$ ${Number(jackpotM).toLocaleString("en-US")} 百萬`
+                ? formatJackpotMillion(jackpotM)
                 : "—"
             }
             ${
@@ -148,6 +162,21 @@
     `;
   }
 
+  function formatJackpot(million) {
+    const m = Number(million);
+    if (!Number.isFinite(m) || m <= 0) return "—";
+  
+    // 100 百萬 = 1 億
+    if (m >= 100) {
+      const yi = m / 100;
+      // 整數億（例如 100 -> 1億, 200 -> 2億）
+      if (Number.isInteger(yi)) return `${yi}億`;
+      // 非整數億（例如 120 -> 1.2億）
+      return `${yi.toFixed(1).replace(/\.0$/, "")}億`;
+    }
+  
+    return `${m}百萬`;
+  }
 
   function renderDisclaimer(data){
     const el = document.getElementById("disclaimer");
