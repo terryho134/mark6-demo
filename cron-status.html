@@ -1,91 +1,150 @@
-// functions/api/cron-status.js
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cron Status｜Mark6</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "PingFang HK", "Noto Sans TC", Arial, sans-serif; margin:24px; line-height:1.55; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .card { border:1px solid #ddd; border-radius:12px; padding:16px; margin:12px 0; }
+    .muted { color:#666; font-size:14px; }
+    .ok { color:#0a7a0a; }
+    .bad { color:#b00020; }
+    code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
+    button,input { padding:8px 10px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:13px; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <h1>Cron Status</h1>
+  <p class="muted">用嚟快速查看：自動抓取（cron）最後一次執行時間、狀態、以及 DB 最新一期資料。</p>
 
-function json(status, data) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  });
-}
+  <div class="card">
+    <div class="row">
+      <button id="refresh">刷新</button>
+      <label class="muted">
+        自動刷新（30秒）
+        <input id="auto" type="checkbox">
+      </label>
 
-function toHK(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  // Hong Kong / Taipei 都係 UTC+8
-  return new Intl.DateTimeFormat("zh-HK", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false,
-  }).format(d);
-}
+      <span class="pill" id="pill">未載入</span>
+      <span class="muted" id="hint"></span>
 
-export async function onRequestGet({ env, request }) {
-  try {
-    // ✅ 如你想「只俾自己睇」，可以啟用呢個 token 保護（可選）
-    // 1) 先喺 Cloudflare Pages > Settings > Environment variables 加 STATUS_TOKEN
-    // 2) 之後用 /cron-status.html?token=xxx
-    const url = new URL(request.url);
-    const provided = url.searchParams.get("token");
-    if (env.STATUS_TOKEN) {
-      if (!provided || provided !== env.STATUS_TOKEN) {
-        return json(403, { ok: false, error: "Forbidden" });
-      }
-    }
+      <span style="margin-left:auto;"></span>
 
-    // ✅ D1 binding 名稱：
-    // 你現有 api 檔案用緊邊個就跟返邊個。
-    // 常見係 env.DB；如果你用 env.MARK6_DB 就改下面兩行。
-    const DB = env.DB || env.MARK6_DB;
-    if (!DB) return json(500, { ok: false, error: "Missing D1 binding (env.DB)" });
+      <!-- 可選：如你啟用 STATUS_TOKEN，呢度會自動讀 querystring token -->
+      <span class="muted">（如有 token：<code class="mono">?token=xxx</code>）</span>
+    </div>
+  </div>
 
-    // 讀 meta
-    const metaRows = await DB.prepare(
-      "SELECT key, value, updatedAt FROM meta WHERE key IN ('last_auto_fetch_at','last_auto_fetch_status')"
-    ).all();
+  <div class="card" id="statusCard">
+    <h3 style="margin-top:0;">狀態</h3>
+    <div id="status"></div>
+  </div>
 
-    const meta = {};
-    for (const r of (metaRows.results || [])) {
-      meta[r.key] = { value: r.value, updatedAt: r.updatedAt };
-    }
+  <div class="card" id="latestCard">
+    <h3 style="margin-top:0;">最新一期</h3>
+    <div id="latest"></div>
+  </div>
 
-    // 最新一期（按 drawDate / drawNo 排）
-    const latest = await DB.prepare(
-      "SELECT drawNo, drawDate, numbers, special FROM draws ORDER BY drawDate DESC, drawNo DESC LIMIT 1"
-    ).first();
+  <p><a href="/">返回首頁</a></p>
 
-    let latestOut = null;
-    if (latest) {
-      let nums = [];
-      try { nums = JSON.parse(latest.numbers || "[]"); } catch {}
-      latestOut = {
-        drawNo: latest.drawNo,
-        drawDate: latest.drawDate,
-        numbers: nums,
-        special: Number(latest.special),
-      };
-    }
+<script>
+  const pill = document.getElementById("pill");
+  const hint = document.getElementById("hint");
+  const statusEl = document.getElementById("status");
+  const latestEl = document.getElementById("latest");
+  const autoEl = document.getElementById("auto");
 
-    // 總期數（可顯示 DB 有幾多期）
-    const cntRow = await DB.prepare("SELECT COUNT(*) AS cnt FROM draws").first();
-
-    return json(200, {
-      ok: true,
-      serverTimeUTC: new Date().toISOString(),
-      serverTimeHK: toHK(new Date().toISOString()),
-      meta: {
-        last_auto_fetch_at: meta.last_auto_fetch_at
-          ? { ...meta.last_auto_fetch_at, hk: toHK(meta.last_auto_fetch_at.value) }
-          : null,
-        last_auto_fetch_status: meta.last_auto_fetch_status || null,
-      },
-      latest: latestOut,
-      totalDraws: cntRow?.cnt ?? null,
-    });
-  } catch (e) {
-    return json(500, { ok: false, error: String(e?.message || e) });
+  function esc(s){
+    return String(s ?? "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
   }
-}
+
+  function fmtNums(nums){
+    if(!Array.isArray(nums)) return "";
+    return nums.map(n => String(Number(n))).join(" ");
+  }
+
+  async function load(){
+    pill.textContent = "載入中…";
+    hint.textContent = "";
+    statusEl.innerHTML = "";
+    latestEl.innerHTML = "";
+
+    // token passthrough（如果你有啟用 STATUS_TOKEN）
+    const u = new URL(location.href);
+    const token = u.searchParams.get("token");
+    const api = token ? `/api/cron-status?token=${encodeURIComponent(token)}` : "/api/cron-status";
+
+    try{
+      const res = await fetch(api, { headers: { "accept":"application/json" } });
+      const text = await res.text();
+
+      let data;
+      try { data = JSON.parse(text); }
+      catch {
+        pill.textContent = "失敗";
+        hint.textContent = `API 回傳非 JSON（HTTP ${res.status}）`;
+        statusEl.innerHTML = `<div class="bad">前 200 字：<code class="mono">${esc(text.slice(0,200))}</code></div>`;
+        return;
+      }
+
+      if(!res.ok || !data.ok){
+        pill.textContent = "失敗";
+        hint.textContent = `HTTP ${res.status}`;
+        statusEl.innerHTML = `<div class="bad">${esc(data.error || "Unknown error")}</div>`;
+        return;
+      }
+
+      pill.textContent = "OK";
+      pill.className = "pill";
+      hint.textContent = `Server(HK)：${data.serverTimeHK || "-"}`;
+
+      const m = data.meta || {};
+      const at = m.last_auto_fetch_at?.hk || m.last_auto_fetch_at?.value || null;
+      const st = m.last_auto_fetch_status?.value || null;
+
+      statusEl.innerHTML = `
+        <div><strong>最後自動抓取時間：</strong>${at ? esc(at) : "—"}</div>
+        <div><strong>狀態：</strong>${st ? esc(st) : "—"}</div>
+        <div class="muted" style="margin-top:6px;">DB 目前總期數：${esc(data.totalDraws ?? "—")}</div>
+      `;
+
+      const L = data.latest;
+      if(!L){
+        latestEl.innerHTML = `<div class="muted">未找到 draws 資料。</div>`;
+      }else{
+        latestEl.innerHTML = `
+          <div><strong>期數：</strong>${esc(L.drawNo)}</div>
+          <div><strong>日期：</strong>${esc(L.drawDate)}</div>
+          <div class="muted" style="margin-top:6px;">
+            正選：${esc(fmtNums(L.numbers))}　特別號：${esc(L.special)}
+          </div>
+        `;
+      }
+    }catch(e){
+      pill.textContent = "失敗";
+      hint.textContent = "Network / fetch error";
+      statusEl.innerHTML = `<div class="bad">${esc(e.message || e)}</div>`;
+    }
+  }
+
+  document.getElementById("refresh").addEventListener("click", load);
+
+  let timer = null;
+  autoEl.addEventListener("change", ()=>{
+    if(autoEl.checked){
+      load();
+      timer = setInterval(load, 30000);
+    }else{
+      if(timer) clearInterval(timer);
+      timer = null;
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>
