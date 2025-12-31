@@ -19,7 +19,7 @@ async function sha256Hex(str) {
  * - ttlSec: max-age 秒數
  * - computeFn: 真正做 DB/計算嘅 function，return {status, body}
  */
-async function withEdgeCache(ctx, keyUrl, ttlSec, computeFn) {
+async function withEdgeCache(waitUntil, keyUrl, ttlSec, computeFn) {
   const cache = caches.default;
   const cacheReq = new Request(keyUrl, { method: "GET" });
 
@@ -27,13 +27,14 @@ async function withEdgeCache(ctx, keyUrl, ttlSec, computeFn) {
   if (hit) return hit;
 
   const { status = 200, body } = await computeFn();
-  const res = json(status, body, {
-    "cache-control": `public, max-age=${ttlSec}`,
-  });
+  const res = json(status, body, { "cache-control": `public, max-age=${ttlSec}` });
 
-  // 只 cache 成功回應
   if (status >= 200 && status < 300) {
-    ctx.waitUntil(cache.put(cacheReq, res.clone()));
+    if (typeof waitUntil === "function") {
+      waitUntil(cache.put(cacheReq, res.clone()));
+    } else {
+      await cache.put(cacheReq, res.clone());
+    }
   }
   return res;
 }
@@ -341,7 +342,7 @@ function computeForDraw(ticket, drawRow) {
   };
 }
 
-export async function onRequest({ request, env, ctx }) {
+export async function onRequest({ request, env, waitUntil }) {
   if (request.method !== "POST") return json(405, { ok: false, error: "Method not allowed" });
 
   let body;
@@ -377,7 +378,7 @@ export async function onRequest({ request, env, ctx }) {
 
   const ttlSec = hasSpecific ? 6 * 60 * 60 : 60;
 
-  return withEdgeCache(ctx, keyUrl, ttlSec, async () => {
+  return withEdgeCache(waitUntil, keyUrl, ttlSec, async () => {
     try {
       const ticket = normalizeTicket(body);
       if (ticket.error) return { status: 400, body: { ok: false, error: ticket.error } };
