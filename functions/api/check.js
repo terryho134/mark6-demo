@@ -10,7 +10,7 @@ function json(status, data, extraHeaders = {}) {
 
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -31,18 +31,11 @@ async function withEdgeCache(ctx, keyUrl, ttlSec, computeFn) {
     "cache-control": `public, max-age=${ttlSec}`,
   });
 
-  // 只 cache 正常成功回應（你亦可改為 status===200）
+  // 只 cache 成功回應
   if (status >= 200 && status < 300) {
     ctx.waitUntil(cache.put(cacheReq, res.clone()));
   }
   return res;
-}
-
-function json(status, obj) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
-  });
 }
 
 const FIXED_PRIZE = {
@@ -84,7 +77,6 @@ function choose(n, k) {
   for (let i = 1; i <= k; i++) {
     r = (r * (n - (k - i))) / i;
   }
-  // should be integer
   return Math.round(r);
 }
 
@@ -92,10 +84,6 @@ function intersectionCount(aSet, arr) {
   let c = 0;
   for (const n of arr) if (aSet.has(n)) c++;
   return c;
-}
-
-function contains(aSet, n) {
-  return aSet.has(n);
 }
 
 function calcSingleUnits(pickSet, winSet, extra) {
@@ -114,10 +102,9 @@ function calcSingleUnits(pickSet, winSet, extra) {
   return {
     units,
     chances: 1,
-    bestHit: { main: m, extra: e === 1 }, // boolean
+    bestHit: { main: m, extra: e === 1 },
   };
 }
-
 
 function calcMultipleUnits(picksArr, winArr, extra) {
   const pickSet = new Set(picksArr);
@@ -127,7 +114,6 @@ function calcMultipleUnits(picksArr, winArr, extra) {
   const y = pickSet.has(extra) ? 1 : 0;                   // picked extra?
   const z = picksArr.length - x - y;                      // other numbers
 
-  // units per division (combinatorial)
   const div1 = choose(x, 6);
   const div2 = y * choose(x, 5);
   const div3 = choose(x, 5) * choose(z, 1);
@@ -138,7 +124,6 @@ function calcMultipleUnits(picksArr, winArr, extra) {
 
   const chances = choose(picksArr.length, 6);
 
-  // ✅ best hit (best possible among all 6-number combinations of this multiple ticket)
   const bestHit = {
     main: Math.min(6, x),
     extra: y === 1,
@@ -147,10 +132,9 @@ function calcMultipleUnits(picksArr, winArr, extra) {
   return {
     units: { div1, div2, div3, div4, div5, div6, div7 },
     chances,
-    bestHit, // ✅ add
+    bestHit,
   };
 }
-
 
 function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
   const bankers = new Set(bankersArr);
@@ -159,13 +143,11 @@ function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
 
   const b = bankers.size;
   const L = legs.size;
-  const t = 6 - b; // number selected from legs in each chance
+  const t = 6 - b;
 
-  // counts in bankers
-  const bw = intersectionCount(winSet, Array.from(bankers)); // bankers that are winning numbers
+  const bw = intersectionCount(winSet, Array.from(bankers));
   const be = bankers.has(extra) ? 1 : 0;
 
-  // counts in legs
   const lw = intersectionCount(winSet, Array.from(legs));
   const le = legs.has(extra) ? 1 : 0;
   const lo = L - lw - le;
@@ -174,23 +156,19 @@ function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
 
   const units = { div1: 0, div2: 0, div3: 0, div4: 0, div5: 0, div6: 0, div7: 0 };
 
-  // ✅ track best hit across all combinations
   let bestMain = 0;
   let bestExtra = false;
 
-  // sum over selecting k winning legs, u extra leg (0/1), r other legs
-  // constraint: k + u + r = t
   for (let k = 0; k <= Math.min(lw, t); k++) {
     for (let u = 0; u <= Math.min(le, t - k); u++) {
       const r = t - k - u;
       if (r < 0 || r > lo) continue;
 
-      const m = bw + k;                 // total winning matches in the 6-number chance
-      const e = be ? 1 : u;             // extra included?
+      const m = bw + k;
+      const e = be ? 1 : u;
 
       const ways = choose(lw, k) * choose(le, u) * choose(lo, r);
 
-      // units by division
       if (m === 6) units.div1 += ways;
       else if (m === 5 && e === 1) units.div2 += ways;
       else if (m === 5 && e === 0) units.div3 += ways;
@@ -199,7 +177,6 @@ function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
       else if (m === 3 && e === 1) units.div6 += ways;
       else if (m === 3 && e === 0) units.div7 += ways;
 
-      // ✅ update best hit (only if this selection exists)
       if (ways > 0) {
         if (m > bestMain) {
           bestMain = m;
@@ -214,13 +191,12 @@ function calcBankerUnits(bankersArr, legsArr, winArr, extra) {
   return {
     units,
     chances,
-    bestHit: { main: bestMain, extra: bestExtra }, // ✅ add
+    bestHit: { main: bestMain, extra: bestExtra },
   };
 }
 
-
 function calcFixedAmount(units, stakeRatio) {
-  const mult = stakeRatio; // 1 or 0.5
+  const mult = stakeRatio;
   const div4 = units.div4 * FIXED_PRIZE.div4 * mult;
   const div5 = units.div5 * FIXED_PRIZE.div5 * mult;
   const div6 = units.div6 * FIXED_PRIZE.div6 * mult;
@@ -287,7 +263,6 @@ async function getDrawsFromDrawNo(env, startDrawNo, n) {
 
   if (!start) return { error: "start draw not found" };
 
-  // 由該期開始（包含該期），按日期由舊到新取 n 期
   const rows = await env.DB.prepare(
     "SELECT drawNo, drawDate, numbers, special FROM draws WHERE drawDate >= ? ORDER BY drawDate ASC LIMIT ?"
   ).bind(start.drawDate, n).all();
@@ -296,8 +271,8 @@ async function getDrawsFromDrawNo(env, startDrawNo, n) {
 }
 
 function normalizeTicket(body) {
-  const type = String(body.type || "").trim(); // single|multiple|banker
-  const half = !!body.half; // half stake?
+  const type = String(body.type || "").trim();
+  const half = !!body.half;
   const stakeRatio = half ? 0.5 : 1;
   const unitStake = half ? 5 : 10;
 
@@ -308,12 +283,10 @@ function normalizeTicket(body) {
   if (type === "banker") {
     const bankers = uniqSorted(body.bankers || []);
     const legs = uniqSorted(body.legs || []);
-    // disallow overlap
     for (const b of bankers) if (legs.includes(b)) return { error: "bankers and legs must not overlap" };
     if (bankers.length < 1 || bankers.length > 5) return { error: "bankers count must be 1-5" };
     if (bankers.length + legs.length < 7) return { error: "banker total numbers must be >= 7" };
     if (legs.length < (6 - bankers.length)) return { error: "legs not enough to form a 6-number chance" };
-    // range check
     for (const n of [...bankers, ...legs]) if (n < 1 || n > 49) return { error: "numbers must be 1-49" };
 
     return { type, half, stakeRatio, unitStake, bankers, legs };
@@ -340,13 +313,8 @@ function computeForDraw(ticket, drawRow) {
   }
 
   const fixed = calcFixedAmount(calc.units, ticket.stakeRatio);
-
-  // total stake
   const totalStake = calc.chances * ticket.unitStake;
-
   const summary = summarizeUnits(calc.units);
-
-  // If div1-3 hit, we only show text (no amounts)
   const hasTop = (calc.units.div1 + calc.units.div2 + calc.units.div3) > 0;
 
   return {
@@ -365,146 +333,179 @@ function computeForDraw(ticket, drawRow) {
     },
     result: {
       units: calc.units,
-      summary,              // non-zero divisions
-      fixedAmount: fixed,   // div4-7 + totalFixed
+      summary,
+      fixedAmount: fixed,
       bestHit: calc.bestHit || null,
       topPrizeNote: hasTop ? "頭/二/三獎派彩屬浮動（以官方該期 Unit Prize 為準）" : null,
     }
   };
 }
 
-export async function onRequest({ request, env }) {
+export async function onRequest({ request, env, ctx }) {
   if (request.method !== "POST") return json(405, { ok: false, error: "Method not allowed" });
 
   let body;
   try { body = await request.json(); }
   catch { return json(400, { ok: false, error: "Invalid JSON body" }); }
 
-  const ticket = normalizeTicket(body);
-  if (ticket.error) return json(400, { ok: false, error: ticket.error });
+  // ✅ 用「穩定序列化」做 cache key（避免 key 順序不同造成 miss）
+  const keyObj = {
+    type: body.type || "",
+    half: !!body.half,
 
-  const drawNo = body.drawNo ? String(body.drawNo).trim() : null;
-  const drawDate = body.drawDate ? String(body.drawDate).trim() : null;
+    picks: Array.isArray(body.picks) ? uniqSorted(body.picks) : null,
+    bankers: Array.isArray(body.bankers) ? uniqSorted(body.bankers) : null,
+    legs: Array.isArray(body.legs) ? uniqSorted(body.legs) : null,
 
-  const rangePreset = body.rangePreset ? String(body.rangePreset) : "60days"; // 60days|30draws|60draws
-  
-  const multi = !!body.multi;
-  const startDrawNo = body.startDrawNo ? String(body.startDrawNo).trim() : null;
-  const multiCount = body.multiCount ? Number(body.multiCount) : 0;
+    drawNo: body.drawNo ? String(body.drawNo).trim() : null,
+    drawDate: body.drawDate ? String(body.drawDate).trim() : null,
 
+    rangePreset: body.rangePreset ? String(body.rangePreset) : "60days",
 
-  if (drawNo && !isYYXXX(drawNo)) return json(400, { ok: false, error: "drawNo must be YY/XXX e.g. 25/018" });
-  if (drawDate && !isYMD(drawDate)) return json(400, { ok: false, error: "drawDate must be YYYY-MM-DD" });
+    multi: !!body.multi,
+    startDrawNo: body.startDrawNo ? String(body.startDrawNo).trim() : null,
+    multiCount: body.multiCount ? Number(body.multiCount) : 0,
+  };
 
-  if (multi) {
-    if (!startDrawNo || !isYYXXX(startDrawNo)) {
-      return json(400, { ok: false, error: "startDrawNo must be YY/XXX e.g. 25/018" });
-    }
-    if (![5,10,20,30].includes(multiCount)) {
-      return json(400, { ok: false, error: "multiCount must be one of 5,10,20,30" });
-    }
-  }
+  const keyHash = await sha256Hex(JSON.stringify(keyObj));
+  const url = new URL(request.url);
+  const keyUrl = `${url.origin}/__cache/check?key=${keyHash}`;
 
-  // decide which draw to check
-  let targetDraw = null;
+  // ✅ TTL：指定某期/多期 => 長 cache；未指定 => 短 cache
+  const hasSpecific =
+    !!keyObj.drawNo || !!keyObj.drawDate || !!keyObj.multi;
 
-  if (drawNo) targetDraw = await getDrawByNo(env, drawNo);
-  else if (drawDate) targetDraw = await getDrawByDate(env, drawDate);
-  else targetDraw = await getLatestDraw(env);
+  const ttlSec = hasSpecific ? 6 * 60 * 60 : 60;
 
-  if (!targetDraw) return json(404, { ok: false, error: "draw not found" });
+  return withEdgeCache(ctx, keyUrl, ttlSec, async () => {
+    try {
+      const ticket = normalizeTicket(body);
+      if (ticket.error) return { status: 400, body: { ok: false, error: ticket.error } };
 
-  const main = computeForDraw(ticket, targetDraw);
+      const drawNo = keyObj.drawNo;
+      const drawDate = keyObj.drawDate;
+      const rangePreset = keyObj.rangePreset;
 
-  // When user did NOT specify drawNo/drawDate and NOT multi-mode, return range results (wins only)
-  let recentWins = [];
-  let rangeInfo = null;
-  
-  if (!drawNo && !drawDate && !multi) {
-    let list = [];
-  
-    if (rangePreset === "30draws") {
-      const rows = await getLastNDraws(env, 30);
-      list = rows?.results || [];
-      rangeInfo = { preset: "30draws", label: "近30期" };
-    } else if (rangePreset === "60draws") {
-      const rows = await getLastNDraws(env, 60);
-      list = rows?.results || [];
-      rangeInfo = { preset: "60draws", label: "近60期" };
-    } else {
-      // default 60 days
-      const now = new Date();
-      const from = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-      const fromYMD = from.toISOString().slice(0, 10);
-  
-      const rows = await getDrawsSince(env, fromYMD);
-      list = rows?.results || [];
-      rangeInfo = { preset: "60days", label: "近60日" };
-    }
-  
-    for (const row of list) {
-      const r = computeForDraw(ticket, row);
-  
-      const hasAny =
-        (r.result.units.div1 + r.result.units.div2 + r.result.units.div3 +
-         r.result.units.div4 + r.result.units.div5 + r.result.units.div6 + r.result.units.div7) > 0;
-  
-      if (hasAny) {
-        recentWins.push({
-          drawNo: r.draw.drawNo,
-          drawDate: r.draw.drawDate,
-          numbers: r.draw.numbers,
-          extra: r.draw.extra,
-          bestHit: r.result.bestHit,
-          summary: r.result.summary,
-          fixedTotal: r.result.fixedAmount.totalFixed,
-          topPrizeNote: r.result.topPrizeNote,
-        });
+      const multi = keyObj.multi;
+      const startDrawNo = keyObj.startDrawNo;
+      const multiCount = keyObj.multiCount;
+
+      if (drawNo && !isYYXXX(drawNo)) return { status: 400, body: { ok: false, error: "drawNo must be YY/XXX e.g. 25/018" } };
+      if (drawDate && !isYMD(drawDate)) return { status: 400, body: { ok: false, error: "drawDate must be YYYY-MM-DD" } };
+
+      if (multi) {
+        if (!startDrawNo || !isYYXXX(startDrawNo)) {
+          return { status: 400, body: { ok: false, error: "startDrawNo must be YY/XXX e.g. 25/018" } };
+        }
+        if (![5, 10, 20, 30].includes(multiCount)) {
+          return { status: 400, body: { ok: false, error: "multiCount must be one of 5,10,20,30" } };
+        }
       }
-    }
-  }
 
-  let multiWins = [];
-  let multiInfo = null;
-  
-  if (multi) {
-    const r = await getDrawsFromDrawNo(env, startDrawNo, multiCount);
-    if (r.error) return json(404, { ok: false, error: r.error });
-  
-    const list = r.rows?.results || [];
-    multiInfo = { startDrawNo, count: multiCount, startDate: r.startDate, checked: list.length };
-  
-    for (const row of list) {
-      const out = computeForDraw(ticket, row);
-      const hasAny =
-        (out.result.units.div1 + out.result.units.div2 + out.result.units.div3 +
-         out.result.units.div4 + out.result.units.div5 + out.result.units.div6 + out.result.units.div7) > 0;
-  
-      if (hasAny) {
-        multiWins.push({
-          drawNo: out.draw.drawNo,
-          drawDate: out.draw.drawDate,
-          numbers: out.draw.numbers,
-          extra: out.draw.extra,
-          bestHit: out.result.bestHit,
-          summary: out.result.summary,
-          fixedTotal: out.result.fixedAmount.totalFixed,
-          topPrizeNote: out.result.topPrizeNote,
-        });
+      // decide which draw to check
+      let targetDraw = null;
+      if (drawNo) targetDraw = await getDrawByNo(env, drawNo);
+      else if (drawDate) targetDraw = await getDrawByDate(env, drawDate);
+      else targetDraw = await getLatestDraw(env);
+
+      if (!targetDraw) return { status: 404, body: { ok: false, error: "draw not found" } };
+
+      // range results (wins only)
+      let recentWins = [];
+      let rangeInfo = null;
+
+      if (!drawNo && !drawDate && !multi) {
+        let list = [];
+
+        if (rangePreset === "30draws") {
+          const rows = await getLastNDraws(env, 30);
+          list = rows?.results || [];
+          rangeInfo = { preset: "30draws", label: "近30期" };
+        } else if (rangePreset === "60draws") {
+          const rows = await getLastNDraws(env, 60);
+          list = rows?.results || [];
+          rangeInfo = { preset: "60draws", label: "近60期" };
+        } else {
+          const now = new Date();
+          const from = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+          const fromYMD = from.toISOString().slice(0, 10);
+
+          const rows = await getDrawsSince(env, fromYMD);
+          list = rows?.results || [];
+          rangeInfo = { preset: "60days", label: "近60日" };
+        }
+
+        for (const row of list) {
+          const r = computeForDraw(ticket, row);
+
+          const hasAny =
+            (r.result.units.div1 + r.result.units.div2 + r.result.units.div3 +
+              r.result.units.div4 + r.result.units.div5 + r.result.units.div6 + r.result.units.div7) > 0;
+
+          if (hasAny) {
+            recentWins.push({
+              drawNo: r.draw.drawNo,
+              drawDate: r.draw.drawDate,
+              numbers: r.draw.numbers,
+              extra: r.draw.extra,
+              bestHit: r.result.bestHit,
+              summary: r.result.summary,
+              fixedTotal: r.result.fixedAmount.totalFixed,
+              topPrizeNote: r.result.topPrizeNote,
+            });
+          }
+        }
       }
-    }
-  }
 
-  
-  return json(200, {
-    ok: true,
-    query: { drawNo: drawNo || null, drawDate: drawDate || null },
-    rangeInfo,      // ✅ 新增
-    recentWins,
-    multiInfo,      // ✅ 新增
-    multiWins,      // ✅ 新增
-    main: targetDraw ? computeForDraw(ticket, targetDraw) : null,
-    disclaimer: "本工具僅供參考；派彩與結果以官方公佈為準。",
+      // multi results
+      let multiWins = [];
+      let multiInfo = null;
+
+      if (multi) {
+        const r = await getDrawsFromDrawNo(env, startDrawNo, multiCount);
+        if (r.error) return { status: 404, body: { ok: false, error: r.error } };
+
+        const list = r.rows?.results || [];
+        multiInfo = { startDrawNo, count: multiCount, startDate: r.startDate, checked: list.length };
+
+        for (const row of list) {
+          const out = computeForDraw(ticket, row);
+          const hasAny =
+            (out.result.units.div1 + out.result.units.div2 + out.result.units.div3 +
+              out.result.units.div4 + out.result.units.div5 + out.result.units.div6 + out.result.units.div7) > 0;
+
+          if (hasAny) {
+            multiWins.push({
+              drawNo: out.draw.drawNo,
+              drawDate: out.draw.drawDate,
+              numbers: out.draw.numbers,
+              extra: out.draw.extra,
+              bestHit: out.result.bestHit,
+              summary: out.result.summary,
+              fixedTotal: out.result.fixedAmount.totalFixed,
+              topPrizeNote: out.result.topPrizeNote,
+            });
+          }
+        }
+      }
+
+      const main = targetDraw ? computeForDraw(ticket, targetDraw) : null;
+
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          query: { drawNo: drawNo || null, drawDate: drawDate || null },
+          rangeInfo,
+          recentWins,
+          multiInfo,
+          multiWins,
+          main,
+          disclaimer: "本工具僅供參考；派彩與結果以官方公佈為準。",
+        }
+      };
+    } catch (e) {
+      return { status: 500, body: { ok: false, error: e?.message || String(e) } };
+    }
   });
-
 }
