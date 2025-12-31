@@ -1,3 +1,44 @@
+function json(status, data, extraHeaders = {}) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...extraHeaders,
+    },
+  });
+}
+
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,"0")).join("");
+}
+
+/**
+ * 在 Pages Functions/Workers 用 caches.default 做「手動 key cache」
+ * - keyUrl: 用嚟當 cache key 的 URL（GET）
+ * - ttlSec: max-age 秒數
+ * - computeFn: 真正做 DB/計算嘅 function，return {status, body}
+ */
+async function withEdgeCache(ctx, keyUrl, ttlSec, computeFn) {
+  const cache = caches.default;
+  const cacheReq = new Request(keyUrl, { method: "GET" });
+
+  const hit = await cache.match(cacheReq);
+  if (hit) return hit;
+
+  const { status = 200, body } = await computeFn();
+  const res = json(status, body, {
+    "cache-control": `public, max-age=${ttlSec}`,
+  });
+
+  // 只 cache 正常成功回應（你亦可改為 status===200）
+  if (status >= 200 && status < 300) {
+    ctx.waitUntil(cache.put(cacheReq, res.clone()));
+  }
+  return res;
+}
+
+
 export async function onRequestGet({ env }) {
   // ✅ 請跟你現有 check.js 用同一個 binding 名
   // 例如你 check.js 係用 env.DB，就保持 env.DB
