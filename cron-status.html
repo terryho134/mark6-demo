@@ -9,21 +9,26 @@
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .card { border:1px solid #ddd; border-radius:12px; padding:16px; margin:12px 0; }
     .muted { color:#666; font-size:14px; }
-    .ok { color:#0a7a0a; }
     .bad { color:#b00020; }
     code { background:#f5f5f5; padding:2px 6px; border-radius:6px; }
-    button,input { padding:8px 10px; }
+    button,input,select { padding:8px 10px; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
-    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:13px; margin-right:6px; }
+    .pill { display:inline-block; padding:2px 10px; border-radius:999px; background:#f3f3f3; font-size:13px; }
+    .pill.ok { background:#e7f6e7; color:#0a7a0a; border:1px solid #bfe7bf; }
+    .pill.fail { background:#ffe7ea; color:#b00020; border:1px solid #ffc0c8; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-top:1px solid #eee; padding:8px 6px; text-align:left; vertical-align: top; }
+    th { background:#fafafa; }
   </style>
 </head>
 <body>
   <h1>Cron Status</h1>
-  <p class="muted">用嚟快速查看：自動抓取（cron）最後一次執行時間、狀態、以及 DB 最新一期資料。</p>
+  <p class="muted">查看：自動抓取（cron）最後一次執行時間、狀態、DB 最新一期，以及資料健康檢查。</p>
 
   <div class="card">
     <div class="row">
       <button id="refresh">刷新</button>
+
       <label class="muted">
         自動刷新（30秒）
         <input id="auto" type="checkbox">
@@ -34,7 +39,17 @@
 
       <span style="margin-left:auto;"></span>
 
-      <!-- 可選：如你啟用 STATUS_TOKEN，呢度會自動讀 querystring token -->
+      <label class="muted">
+        Health 檢查期數：
+        <select id="limit">
+          <option value="30">30</option>
+          <option value="60" selected>60</option>
+          <option value="100">100</option>
+          <option value="150">150</option>
+          <option value="200">200</option>
+        </select>
+      </label>
+
       <span class="muted">（如有 token：<code class="mono">?token=xxx</code>）</span>
     </div>
   </div>
@@ -49,6 +64,15 @@
     <div id="latest"></div>
   </div>
 
+  <div class="card" id="healthCard">
+    <div class="row" style="justify-content:space-between;">
+      <h3 style="margin:0;">資料健康檢查（Health）</h3>
+      <span id="healthPill" class="pill">—</span>
+    </div>
+    <div class="muted" style="margin-top:6px;" id="healthSummary"></div>
+    <div id="healthBody" style="margin-top:10px;"></div>
+  </div>
+
   <p><a href="/">返回首頁</a></p>
 
 <script>
@@ -57,26 +81,110 @@
   const statusEl = document.getElementById("status");
   const latestEl = document.getElementById("latest");
   const autoEl = document.getElementById("auto");
+  const limitEl = document.getElementById("limit");
+
+  const healthPill = document.getElementById("healthPill");
+  const healthSummary = document.getElementById("healthSummary");
+  const healthBody = document.getElementById("healthBody");
 
   function esc(s){
     return String(s ?? "").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
   }
-
   function fmtNums(nums){
     if(!Array.isArray(nums)) return "";
     return nums.map(n => String(Number(n))).join(" ");
   }
 
+  function renderHealth(h){
+    if(!h){
+      healthPill.className = "pill";
+      healthPill.textContent = "—";
+      healthSummary.textContent = "";
+      healthBody.innerHTML = `<div class="muted">未有 health 資料。</div>`;
+      return;
+    }
+
+    const ok = !!h.ok;
+    healthPill.className = "pill " + (ok ? "ok" : "fail");
+    healthPill.textContent = ok ? "OK" : "有問題";
+
+    const dupCount = (h.duplicateDrawNo || []).length;
+    healthSummary.innerHTML = `
+      已檢查 <strong>${esc(h.checked)}</strong> 期（limit=${esc(h.limit)}），
+      issues：<strong>${esc(h.issuesCount)}</strong>，
+      重覆 drawNo：<strong>${esc(dupCount)}</strong>
+    `;
+
+    const parts = [];
+
+    if (dupCount > 0) {
+      const rows = h.duplicateDrawNo
+        .slice(0, 20)
+        .map(x => `<li><code class="mono">${esc(x.drawNo)}</code> × ${esc(x.cnt)}</li>`)
+        .join("");
+      parts.push(`
+        <div style="margin:10px 0;">
+          <div class="bad"><strong>紅旗：drawNo 重覆（最多顯示20）</strong></div>
+          <ol>${rows}</ol>
+        </div>
+      `);
+    }
+
+    if (!h.issues || h.issues.length === 0) {
+      parts.push(`<div class="muted">未發現問題（以目前檢查範圍計）。</div>`);
+    } else {
+      const rows = h.issues.map(it => `
+        <tr>
+          <td><code class="mono">${esc(it.drawNo)}</code><div class="muted">${esc(it.drawDate)}</div></td>
+          <td class="mono">${esc(it.type)}</td>
+          <td>${esc(it.detail)}</td>
+        </tr>
+      `).join("");
+
+      parts.push(`
+        <table>
+          <thead>
+            <tr>
+              <th style="width:170px;">期數 / 日期</th>
+              <th style="width:150px;">類型</th>
+              <th>說明</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="muted" style="margin-top:8px;">
+          只顯示最多 200 條 issues。需要更深入就加大 limit 或另做專用 health 頁。
+        </div>
+      `);
+    }
+
+    if (Array.isArray(h.notes) && h.notes.length) {
+      parts.push(`
+        <div class="muted" style="margin-top:10px;">
+          <strong>說明：</strong>
+          <ul>${h.notes.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+        </div>
+      `);
+    }
+
+    healthBody.innerHTML = parts.join("");
+  }
+
   async function load(){
     pill.textContent = "載入中…";
+    pill.className = "pill";
     hint.textContent = "";
     statusEl.innerHTML = "";
     latestEl.innerHTML = "";
+    renderHealth(null);
 
-    // token passthrough（如果你有啟用 STATUS_TOKEN）
     const u = new URL(location.href);
     const token = u.searchParams.get("token");
-    const api = token ? `/api/cron-status?token=${encodeURIComponent(token)}` : "/api/cron-status";
+    const lim = limitEl.value || "60";
+
+    const api = token
+      ? `/api/cron-status?token=${encodeURIComponent(token)}&limit=${encodeURIComponent(lim)}`
+      : `/api/cron-status?limit=${encodeURIComponent(lim)}`;
 
     try{
       const res = await fetch(api, { headers: { "accept":"application/json" } });
@@ -86,6 +194,7 @@
       try { data = JSON.parse(text); }
       catch {
         pill.textContent = "失敗";
+        pill.className = "pill fail";
         hint.textContent = `API 回傳非 JSON（HTTP ${res.status}）`;
         statusEl.innerHTML = `<div class="bad">前 200 字：<code class="mono">${esc(text.slice(0,200))}</code></div>`;
         return;
@@ -93,13 +202,14 @@
 
       if(!res.ok || !data.ok){
         pill.textContent = "失敗";
+        pill.className = "pill fail";
         hint.textContent = `HTTP ${res.status}`;
         statusEl.innerHTML = `<div class="bad">${esc(data.error || "Unknown error")}</div>`;
         return;
       }
 
       pill.textContent = "OK";
-      pill.className = "pill";
+      pill.className = "pill ok";
       hint.textContent = `Server(HK)：${data.serverTimeHK || "-"}`;
 
       const m = data.meta || {};
@@ -124,14 +234,22 @@
           </div>
         `;
       }
+
+      renderHealth(data.health);
+
     }catch(e){
       pill.textContent = "失敗";
+      pill.className = "pill fail";
       hint.textContent = "Network / fetch error";
       statusEl.innerHTML = `<div class="bad">${esc(e.message || e)}</div>`;
     }
   }
 
   document.getElementById("refresh").addEventListener("click", load);
+
+  limitEl.addEventListener("change", ()=>{
+    load();
+  });
 
   let timer = null;
   autoEl.addEventListener("change", ()=>{
