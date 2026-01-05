@@ -57,10 +57,10 @@ export async function onRequestGet({ request, env, ctx }) {
           .prepare(
             `SELECT drawNo, drawDate, numbers, special, year, updatedAt
              FROM draws
-             ORDER BY CAST(drawNo AS INTEGER) DESC
-             LIMIT ?`
+             WHERE drawDate >= ?
+             ORDER BY drawDate DESC, CAST(drawNo AS INTEGER) DESC`
           )
-          .bind(issues)
+          .bind(startStr)
           .all();
         rows = res.results || [];
       } else {
