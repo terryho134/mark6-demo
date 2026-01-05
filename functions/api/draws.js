@@ -1,82 +1,98 @@
-function json(status, data, extraHeaders = {}) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      ...extraHeaders,
-    },
-  });
+// functions/api/draws.js
+import { edgeCacheJsonResponse, getLatestDrawMeta } from "../_lib/edgeCache.js";
+
+function ymd(d) {
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-/**
- * 在 Pages Functions/Workers 用 caches.default 做「手動 key cache」
- * - keyUrl: 用嚟當 cache key 的 URL（GET）
- * - ttlSec: max-age 秒數
- * - computeFn: 真正做 DB/計算嘅 function，return {status, body}
- */
-async function withEdgeCache(ctx, keyUrl, ttlSec, computeFn) {
-  const cache = caches.default;
-  const cacheReq = new Request(keyUrl, { method: "GET" });
-
-  const hit = await cache.match(cacheReq);
-  if (hit) return hit;
-
-  const { status = 200, body } = await computeFn();
-  const res = json(status, body, {
-    "cache-control": `public, max-age=${ttlSec}`,
-  });
-
-  // 只 cache 成功回應
-  if (status >= 200 && status < 300) {
-    ctx.waitUntil(cache.put(cacheReq, res.clone()));
-  }
-  return res;
+function parseNums(str) {
+  if (!str) return [];
+  return String(str)
+    .split(/[^0-9]+/)
+    .filter(Boolean)
+    .map((x) => Number(x));
 }
 
 export async function onRequestGet({ request, env, ctx }) {
+  const db = env.DB;
   const url = new URL(request.url);
 
-  // limit
-  const limitRaw = url.searchParams.get("limit") || "10";
-  let limit = parseInt(limitRaw, 10);
-  if (!Number.isFinite(limit) || limit <= 0) limit = 10;
-  limit = Math.min(limit, 120); // 避免一次過太大
+  // Fast meta for cache-bust (new draw => new cache key immediately)
+  const meta = await getLatestDrawMeta(db);
 
-  // cache key（包含 limit）
-  const keyUrl = `${url.origin}/__cache/draws?limit=${limit}`;
+  return edgeCacheJsonResponse({
+    request,
+    ctx,
+    cacheKeyNamespace: "api_draws",
+    version: meta.latestDrawNo || "v0",
+    ttl: 30, // fresh 30s
+    swr: 300, // allow stale 5m while background refresh
+    cacheControlMaxAge: 0, // browser always revalidate
+    cacheControlSMaxAge: 30,
+    computeJson: async () => {
+      const days = Number(url.searchParams.get("days") || "0");
+      const issues = Number(url.searchParams.get("issues") || "0");
+      const from = url.searchParams.get("from");
+      const count = Number(url.searchParams.get("count") || "0");
+      const dir = (url.searchParams.get("dir") || "desc").toLowerCase() === "asc" ? "asc" : "desc";
 
-  return withEdgeCache(ctx, keyUrl, 60, async () => {
-    try {
-      if (!env.DB) {
-        return {
-          status: 500,
-          body: { ok: false, error: "Missing D1 binding (env.DB)" },
-        };
+      let rows = [];
+
+      if (from && count > 0) {
+        // From drawNo, take N draws (for multi-check)
+        const sql = `
+          SELECT drawNo, drawDate, numbers, special, year, updatedAt
+          FROM draws
+          WHERE CAST(drawNo AS INTEGER) ${dir === "asc" ? ">=" : "<="} CAST(? AS INTEGER)
+          ORDER BY CAST(drawNo AS INTEGER) ${dir.toUpperCase()}
+          LIMIT ?
+        `;
+        const res = await db.prepare(sql).bind(from, count).all();
+        rows = res.results || [];
+      } else if (issues > 0) {
+        const res = await db
+          .prepare(
+            `SELECT drawNo, drawDate, numbers, special, year, updatedAt
+             FROM draws
+             ORDER BY CAST(drawNo AS INTEGER) DESC
+             LIMIT ?`
+          )
+          .bind(issues)
+          .all();
+        rows = res.results || [];
+      } else {
+        // Default days=60 if nothing specified
+        const d = days > 0 ? days : 60;
+        const start = new Date(Date.now() - d * 86400000);
+        const startStr = ymd(start);
+
+        const res = await db
+          .prepare(
+            `SELECT drawNo, drawDate, numbers, special, year, updatedAt
+             FROM draws
+             WHERE drawDate >= ?
+             ORDER BY CAST(drawNo AS INTEGER) DESC`
+          )
+          .bind(startStr)
+          .all();
+        rows = res.results || [];
       }
 
-      const q = `
-        SELECT drawNo, drawDate, numbers, special
-        FROM draws
-        ORDER BY drawDate DESC, drawNo DESC
-        LIMIT ?1
-      `;
-
-      const r = await env.DB.prepare(q).bind(limit).all();
-      const rows = r?.results || [];
-
-      const draws = rows.map(row => ({
-        drawNo: row.drawNo,
-        drawDate: row.drawDate,                 // YYYY-MM-DD
-        numbers: JSON.parse(row.numbers || "[]"),
-        extra: Number(row.special),
-      }));
-
-      return { status: 200, body: { ok: true, limit, draws } };
-    } catch (e) {
       return {
-        status: 500,
-        body: { ok: false, error: e?.message || String(e) },
+        meta: {
+          latestDrawNo: meta.latestDrawNo,
+          latestUpdatedAt: meta.latestUpdatedAt,
+          returned: rows.length,
+        },
+        draws: rows.map((r) => ({
+          ...r,
+          numbersArr: parseNums(r.numbers),
+          specialNo: Number(r.special),
+        })),
       };
-    }
+    },
   });
 }
