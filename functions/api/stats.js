@@ -1,164 +1,91 @@
-function json(status, data, extraHeaders = {}) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      ...extraHeaders,
-    },
-  });
+// functions/api/stats.js
+import { edgeCacheJsonResponse, getLatestDrawMeta } from "../_lib/edgeCache.js";
+
+function parseNums(str) {
+  if (!str) return [];
+  return String(str)
+    .split(/[^0-9]+/)
+    .filter(Boolean)
+    .map((x) => Number(x));
 }
 
-async function sha256Hex(str) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
-}
+export async function onRequestGet({ request, env, ctx }) {
+  const db = env.DB;
+  const meta = await getLatestDrawMeta(db);
 
-/**
- * 在 Pages Functions/Workers 用 caches.default 做「手動 key cache」
- * - keyUrl: 用嚟當 cache key 的 URL（GET）
- * - ttlSec: max-age 秒數
- * - computeFn: 真正做 DB/計算嘅 function，return {status, body}
- */
-async function withEdgeCache(ctx, keyUrl, ttlSec, computeFn) {
-  const cache = caches.default;
-  const cacheReq = new Request(keyUrl, { method: "GET" });
+  return edgeCacheJsonResponse({
+    request,
+    ctx,
+    cacheKeyNamespace: "api_stats",
+    version: meta.latestDrawNo || "v0",
+    ttl: 300, // fresh 5m
+    swr: 3600, // stale up to 1h while background refresh
+    cacheControlMaxAge: 0,
+    cacheControlSMaxAge: 300,
+    computeJson: async () => {
+      const res = await db
+        .prepare(
+          `SELECT drawNo, drawDate, numbers, special
+           FROM draws
+           ORDER BY CAST(drawNo AS INTEGER) DESC`
+        )
+        .all();
 
-  const hit = await cache.match(cacheReq);
-  if (hit) return hit;
+      const draws = res.results || [];
+      const totalDraws = draws.length;
+      const windows = [100, 50, 30, 20, 10];
 
-  const { status = 200, body } = await computeFn();
-  const res = json(status, body, {
-    "cache-control": `public, max-age=${ttlSec}`,
-  });
+      // total counts include numbers + special
+      const totalCount = Array(50).fill(0);
+      const windowCount = Object.fromEntries(windows.map((w) => [w, Array(50).fill(0)]));
 
-  // 只 cache 成功回應
-  if (status >= 200 && status < 300) {
-    ctx.waitUntil(cache.put(cacheReq, res.clone()));
-  }
-  return res;
-}
+      // gap based on "numbers" only
+      const lastSeenIdx = Array(50).fill(null);
 
-export async function onRequestGet({ env, request, ctx }) {
-  // ✅ Cache 設定：stats 建議 60 秒（admin 更新後最多延遲 60 秒反映）
-  const url = new URL(request.url);
-  const keyUrl = `${url.origin}/__cache/stats?${url.searchParams.toString() || "v=1"}`;
+      draws.forEach((d, idx) => {
+        const nums = parseNums(d.numbers);
+        const sp = Number(d.special);
 
-  return withEdgeCache(ctx, keyUrl, 60, async () => {
-    try {
-      // ✅ 請跟你現有 check.js 用同一個 binding 名
-      // 例如你 check.js 係用 env.DB，就保持 env.DB
-      const db = env.DB; // <- 如果你不是 DB，改成你的 D1 binding 名
-
-      if (!db) {
-        return {
-          status: 500,
-          body: { ok: false, error: "Missing D1 binding (env.DB). Please match your check.js binding name." },
-        };
-      }
-
-      // 1) 總期數
-      const cntRow = await db.prepare(`SELECT COUNT(*) AS cnt FROM draws`).first();
-      const totalDraws = Number(cntRow?.cnt || 0);
-
-      // 2) 取所有攪珠（由新到舊）
-      const all = await db.prepare(`
-        SELECT drawNo, drawDate, numbers, special
-        FROM draws
-        ORDER BY drawDate DESC, drawNo DESC
-      `).all();
-
-      const list = all?.results || [];
-
-      // 統計容器
-      const totals = Array(50).fill(0);      // index 1..49
-      const lastSeen = Array(50).fill(null); // gap index（0=最新一期有出）
-
-      const w100 = Array(50).fill(0);
-      const w50  = Array(50).fill(0);
-      const w30  = Array(50).fill(0);
-      const w20  = Array(50).fill(0);
-      const w10  = Array(50).fill(0);
-
-      function addHit(n, idx) {
-        n = Number(n);
-        if (!Number.isFinite(n) || n < 1 || n > 49) return;
-
-        totals[n] += 1;
-
-        // gap：第一次見到（由新到舊掃）就記錄 index
-        if (lastSeen[n] === null) lastSeen[n] = idx;
-
-        // 近N期（idx 由 0 開始）
-        if (idx < 100) w100[n] += 1;
-        if (idx < 50)  w50[n]  += 1;
-        if (idx < 30)  w30[n]  += 1;
-        if (idx < 20)  w20[n]  += 1;
-        if (idx < 10)  w10[n]  += 1;
-      }
-
-      for (let idx = 0; idx < list.length; idx++) {
-        const row = list[idx];
-
-        let nums = [];
-        try {
-          nums = (JSON.parse(row.numbers) || []).map(Number);
-        } catch {
-          nums = [];
+        // gap tracking (numbers only)
+        for (const n of nums) {
+          if (lastSeenIdx[n] === null) lastSeenIdx[n] = idx;
         }
-        const extra = Number(row.special);
 
-        // 包括正選 + 特別號
-        for (const n of nums) addHit(n, idx);
-        addHit(extra, idx);
-      }
+        // total counts (numbers + special)
+        for (const n of nums) totalCount[n] += 1;
+        if (sp >= 1 && sp <= 49) totalCount[sp] += 1;
 
-      // gap：0=上一期有出，1=上一期無出但前期有出...
-      const gap = Array(50).fill(null);
+        for (const w of windows) {
+          if (idx < w) {
+            for (const n of nums) windowCount[w][n] += 1;
+            if (sp >= 1 && sp <= 49) windowCount[w][sp] += 1;
+          }
+        }
+      });
+
+      const rows = [];
       for (let n = 1; n <= 49; n++) {
-        gap[n] = lastSeen[n];
-      }
-
-      // Top10 / Bottom10（按總次數）
-      const arr = [];
-      for (let n = 1; n <= 49; n++) arr.push({ n, total: totals[n] });
-      arr.sort((a, b) => b.total - a.total || a.n - b.n);
-
-      const top10 = arr.slice(0, 10).map(x => x.n);
-      const bottom10 = arr
-        .slice(-10)
-        .sort((a, b) => a.total - b.total || a.n - b.n)
-        .map(x => x.n);
-
-      // items
-      const items = [];
-      for (let n = 1; n <= 49; n++) {
-        items.push({
-          n,
-          gap: gap[n],
-          total: totals[n],
-          r100: w100[n],
-          r50:  w50[n],
-          r30:  w30[n],
-          r20:  w20[n],
-          r10:  w10[n],
+        const idx = lastSeenIdx[n];
+        rows.push({
+          no: n,
+          gap: idx === null ? totalDraws : idx, // 0 means appeared in latest draw
+          total: totalCount[n],
+          last100: windowCount[100][n],
+          last50: windowCount[50][n],
+          last30: windowCount[30][n],
+          last20: windowCount[20][n],
+          last10: windowCount[10][n],
         });
       }
 
       return {
-        status: 200,
-        body: {
-          ok: true,
+        meta: {
+          latestDrawNo: meta.latestDrawNo,
+          latestUpdatedAt: meta.latestUpdatedAt,
           totalDraws,
-          top10,
-          bottom10,
-          items,
         },
+        rows,
       };
-    } catch (e) {
-      return {
-        status: 500,
-        body: { ok: false, error: "stats failed: " + (e?.message || String(e)) },
-      };
-    }
+    },
   });
 }
