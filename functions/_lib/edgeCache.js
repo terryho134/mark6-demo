@@ -1,14 +1,17 @@
 // functions/_lib/edgeCache.js
 
 function getWaitUntil(ctx) {
-  // Pages Functions: ctx.waitUntil
+  // Pages Functions: context.waitUntil
   // Some runtimes: ctx.ctx.waitUntil (rare)
   const fn =
     (ctx && typeof ctx.waitUntil === "function" && ctx.waitUntil.bind(ctx)) ||
-    (ctx?.ctx && typeof ctx.ctx.waitUntil === "function" && ctx.ctx.waitUntil.bind(ctx.ctx)) ||
+    (ctx?.ctx &&
+      typeof ctx.ctx.waitUntil === "function" &&
+      ctx.ctx.waitUntil.bind(ctx.ctx)) ||
     null;
 
-  return fn || ((p) => p); // no-op fallback
+  // no-op fallback to avoid crashing when ctx is missing
+  return fn || ((p) => p);
 }
 
 // Add this near top of edgeCache.js
@@ -72,6 +75,7 @@ export async function edgeCacheJsonResponse({
   cacheControlMaxAge = 0, // browser max-age
   cacheControlSMaxAge = ttl, // edge s-maxage
 }) {
+  const waitUntil = getWaitUntil(ctx);
   const url = canonicalizeUrl(request.url);
 
   // Allow bypass
@@ -103,11 +107,15 @@ export async function edgeCacheJsonResponse({
 
     // Stale but within SWR => serve stale, refresh in background
     if (created && ageSec <= ttl + swr) {
-      ctx.waitUntil(
+      waitUntil(
         (async () => {
           const data = await computeJson();
           const resp = await jsonResponseWithEtag(data, request, {
-            cacheControl: buildCacheControl(cacheControlMaxAge, cacheControlSMaxAge, swr),
+            cacheControl: buildCacheControl(
+              cacheControlMaxAge,
+              cacheControlSMaxAge,
+              swr
+            ),
             edgeStatus: "REFRESH",
           });
           await cache.put(cacheReq, resp.clone());
@@ -125,7 +133,7 @@ export async function edgeCacheJsonResponse({
     edgeStatus: "MISS",
   });
 
-  ctx.waitUntil(cache.put(cacheReq, resp.clone()));
+  waitUntil(cache.put(cacheReq, resp.clone()));
   return resp;
 }
 
@@ -191,6 +199,8 @@ export async function edgeCacheJsonData({
   keyObject, // any stable object (will be stringified) to form cache key
   computeJson,
 }) {
+  const waitUntil = getWaitUntil(ctx);
+
   const keyUrl = new URL("https://edgecache.local/" + cacheKeyNamespace);
   keyUrl.searchParams.set("__v", String(version));
   keyUrl.searchParams.set("__k", await sha1Hex(JSON.stringify(keyObject)));
@@ -208,13 +218,17 @@ export async function edgeCacheJsonData({
     }
 
     if (created && ageSec <= ttl + swr) {
-      ctx.waitUntil(
+      waitUntil(
         (async () => {
           const data = await computeJson();
-          const resp = await jsonResponseWithEtag(data, new Request("https://dummy.local"), {
-            cacheControl: `public, max-age=0, s-maxage=${ttl}, stale-while-revalidate=${swr}`,
-            edgeStatus: "REFRESH",
-          });
+          const resp = await jsonResponseWithEtag(
+            data,
+            new Request("https://dummy.local"),
+            {
+              cacheControl: `public, max-age=0, s-maxage=${ttl}, stale-while-revalidate=${swr}`,
+              edgeStatus: "REFRESH",
+            }
+          );
           await cache.put(cacheReq, resp.clone());
         })()
       );
@@ -223,11 +237,15 @@ export async function edgeCacheJsonData({
   }
 
   const data = await computeJson();
-  const resp = await jsonResponseWithEtag(data, new Request("https://dummy.local"), {
-    cacheControl: `public, max-age=0, s-maxage=${ttl}, stale-while-revalidate=${swr}`,
-    edgeStatus: "MISS",
-  });
+  const resp = await jsonResponseWithEtag(
+    data,
+    new Request("https://dummy.local"),
+    {
+      cacheControl: `public, max-age=0, s-maxage=${ttl}, stale-while-revalidate=${swr}`,
+      edgeStatus: "MISS",
+    }
+  );
 
-  ctx.waitUntil(cache.put(cacheReq, resp.clone()));
+  waitUntil(cache.put(cacheReq, resp.clone()));
   return data;
 }
