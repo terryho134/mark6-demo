@@ -33,6 +33,11 @@ function parseNums(str) {
     .filter((n) => n >= 1 && n <= 49);
 }
 
+function isBig(n) {
+  // Mark Six common split: 1-24 small, 25-49 big
+  return n >= 25;
+}
+
 export async function onRequestGet(context) {
   const { request, env } = context;
   const ctx = context;
@@ -44,11 +49,15 @@ export async function onRequestGet(context) {
     const url = new URL(request.url);
     const meta = await getLatestDrawMeta(db);
 
+    // ✅ bust cache on every deploy
+    const deployVer = env.CF_PAGES_COMMIT_SHA || "dev";
+    const version = `${meta.latestDrawNo || "v0"}_${deployVer}`;
+
     return edgeCacheJsonResponse({
       request,
       ctx,
       cacheKeyNamespace: "api_draws",
-      version: meta.latestDrawNo || "v0",
+      version,
       ttl: 30,
       swr: 300,
       cacheControlMaxAge: 0,
@@ -119,19 +128,47 @@ export async function onRequestGet(context) {
             year: r.year,
             updatedAt: r.updatedAt,
 
-            // ✅ most old pages use these
+            // old UI
             numbers: numbersArr,
             special: specialNo,
 
-            // ✅ aliases (很多舊 JS 會用)
+            // aliases
             numbersArr,
             specialNo,
 
-            // keep originals too
+            // raw
             numbersStr: r.numbers,
             specialStr: r.special,
           };
         });
+
+        // ✅ add summary to stop NaN bottom line (if your UI reads it)
+        let totalBalls = 0; // include special
+        let totalBig = 0;
+        let totalSmall = 0;
+
+        for (const d of draws) {
+          const all7 = [...(d.numbers || []), Number(d.special || 0)].filter((n) => n >= 1 && n <= 49);
+          totalBalls += all7.length;
+          for (const n of all7) {
+            if (isBig(n)) totalBig++;
+            else totalSmall++;
+          }
+        }
+
+        const drawCount = draws.length || 0;
+
+        const summary = {
+          drawCount,
+          totalBalls,
+          avgBalls: drawCount ? totalBalls / drawCount : 0,
+          totalBig,
+          totalSmall,
+          avgBig: drawCount ? totalBig / drawCount : 0,
+          avgSmall: drawCount ? totalSmall / drawCount : 0,
+          // keep a boolean too, some UIs show "大/小"
+          avgBigVsSmall: totalBig > totalSmall ? "大" : "小",
+        };
 
         return {
           ok: true,
@@ -139,7 +176,9 @@ export async function onRequestGet(context) {
             latestDrawNo: meta.latestDrawNo,
             latestUpdatedAt: meta.latestUpdatedAt,
             returned: draws.length,
+            deployVer,
           },
+          summary,
           draws,
         };
       },
