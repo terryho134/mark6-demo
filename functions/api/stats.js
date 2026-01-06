@@ -62,6 +62,7 @@ export async function onRequestGet(context) {
           windows.map((w) => [w, Array(50).fill(0)])
         );
 
+        // gap based on "numbers" only
         const lastSeenIdx = Array(50).fill(null);
 
         draws.forEach((d, idx) => {
@@ -72,6 +73,7 @@ export async function onRequestGet(context) {
             if (lastSeenIdx[n] === null) lastSeenIdx[n] = idx;
           }
 
+          // total counts includes numbers + special
           for (const n of nums) totalCount[n] += 1;
           if (sp >= 1 && sp <= 49) totalCount[sp] += 1;
 
@@ -98,13 +100,21 @@ export async function onRequestGet(context) {
           });
         }
 
+        // ✅ Provide multiple compatible keys for "total"
         return {
           ok: true,
+
+          // many frontends use top-level totalDraws
+          totalDraws,
+
+          // some use meta.totalDraws / meta.total
           meta: {
             latestDrawNo: meta.latestDrawNo,
             latestUpdatedAt: meta.latestUpdatedAt,
             totalDraws,
+            total: totalDraws,
           },
+
           rows,
         };
       },
