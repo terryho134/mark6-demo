@@ -50,6 +50,17 @@ function tierName(matchMain, matchSpecial) {
   return null;
 }
 
+function winsEmpty() {
+  return { "1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0 };
+}
+
+function bestTier(wins) {
+  // 1st is best
+  const order = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th"];
+  for (const t of order) if ((wins[t] || 0) > 0) return t;
+  return null;
+}
+
 function countHitsMultiple(selected, winMainArr, specialNo) {
   const selSet = new Set(selected);
   const a = winMainArr.reduce((acc, n) => acc + (selSet.has(n) ? 1 : 0), 0);
@@ -58,7 +69,7 @@ function countHitsMultiple(selected, winMainArr, specialNo) {
   const nonWinNonSpecial = n - a - b;
 
   const lines = nCr(n, 6);
-  const wins = { "1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0 };
+  const wins = winsEmpty();
 
   wins["1st"] = nCr(a, 6);
   wins["2nd"] = b ? nCr(a, 5) : 0;
@@ -68,7 +79,8 @@ function countHitsMultiple(selected, winMainArr, specialNo) {
   wins["6th"] = b ? nCr(a, 3) * nCr(nonWinNonSpecial, 2) : 0;
   wins["7th"] = nCr(a, 3) * nCr(nonWinNonSpecial, 3);
 
-  return { lines, wins, hasWin: Object.values(wins).some((x) => x > 0) };
+  const hasWin = Object.values(wins).some((x) => x > 0);
+  return { lines, wins, hasWin, matchMain: a, hasSpecialPicked: Boolean(b) };
 }
 
 function countHitsBanker(bankers, others, winMainArr, specialNo) {
@@ -77,7 +89,7 @@ function countHitsBanker(bankers, others, winMainArr, specialNo) {
   const O = others.length;
   const winSet = new Set(winMainArr);
 
-  const wins = { "1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0 };
+  const wins = winsEmpty();
   if (need < 0 || need > O) return { lines: 0, wins, hasWin: false };
 
   const aB = bankers.reduce((acc, n) => acc + (winSet.has(n) ? 1 : 0), 0);
@@ -105,46 +117,44 @@ function countHitsBanker(bankers, others, winMainArr, specialNo) {
     }
   }
 
-  return { lines, wins, hasWin: Object.values(wins).some((x) => x > 0) };
+  const hasWin = Object.values(wins).some((x) => x > 0);
+  return { lines, wins, hasWin };
 }
 
+// ✅ super-robust extraction: collect any numeric param values 1..49
 function extractNumbersFromAllParams(url) {
-  // Accept repeated params (e.g. n=1&n=2...)
-  const candidateKeys = ["numbers", "nums", "selected", "sel", "pick", "picks", "n", "num", "number", "no"];
   let nums = [];
-
-  for (const k of candidateKeys) {
-    const all = url.searchParams.getAll(k);
-    if (all && all.length) {
-      for (const v of all) nums.push(...parseNumsStr(v));
+  for (const [k, v] of url.searchParams.entries()) {
+    // support repeated keys like numbers[]=1&numbers[]=2...
+    if (k.endsWith("[]")) nums.push(...parseNumsStr(v));
+    // common keys
+    if (/(numbers|nums|selected|sel|pick|picks|n|num|no|ball)/i.test(k)) {
+      nums.push(...parseNumsStr(v));
     }
   }
-
-  // If still empty, scan every param value for number-list patterns
+  // also try a pass on all values if still empty
   if (nums.length === 0) {
     for (const [, v] of url.searchParams.entries()) {
       const arr = parseNumsStr(v);
-      if (arr.length >= 6) {
-        nums.push(...arr);
-        break;
-      }
+      if (arr.length) nums.push(...arr);
     }
   }
-
   return uniq(nums);
 }
 
 async function parsePayload(request) {
   const url = new URL(request.url);
 
-  // 1) Try JSON-ish params (payload/data/q/state/bets)
+  const debug = url.searchParams.get("debug") === "1";
+
+  // 1) packed JSON in common keys
   const jsonKeys = ["payload", "data", "q", "state", "bets", "bet"];
   for (const k of jsonKeys) {
     const v = url.searchParams.get(k);
     if (v && (v.trim().startsWith("{") || v.trim().startsWith("["))) {
       try {
         const obj = JSON.parse(v);
-        if (obj && typeof obj === "object") return obj;
+        if (obj && typeof obj === "object") return { payload: obj, debug };
       } catch {}
     }
   }
@@ -154,12 +164,16 @@ async function parsePayload(request) {
     const ct = request.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
       const b = await request.json().catch(() => null);
-      if (b) return b;
+      if (b) return { payload: b, debug };
     }
   }
 
-  // 3) Fallback classic GET
-  const typeRaw = url.searchParams.get("type") || url.searchParams.get("mode") || url.searchParams.get("betType") || "single";
+  // 3) classic GET fallback
+  const typeRaw =
+    url.searchParams.get("type") ||
+    url.searchParams.get("mode") ||
+    url.searchParams.get("betType") ||
+    "single";
   const type = String(typeRaw).toLowerCase();
 
   const half = url.searchParams.get("half") === "1" || url.searchParams.get("halfBet") === "1";
@@ -197,14 +211,14 @@ async function parsePayload(request) {
     bets = [{ type: "single", numbers }];
   }
 
-  return { bets, half, scope };
+  return { payload: { bets, half, scope }, debug };
 }
 
-async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
+async function loadDrawsForScope({ db, ctx, version, scope }) {
   return edgeCacheJsonData({
     ctx,
     cacheKeyNamespace: "check_draws_list",
-    version: latestDrawNo || "v0",
+    version,
     ttl: 30,
     swr: 300,
     keyObject: scope,
@@ -268,15 +282,20 @@ async function computeCheckResult({ request, env, ctx }) {
   const db = getDb(env);
   if (!db) throw new Error("D1 binding not found. Please check env binding name.");
 
-  const latest = await getLatestDrawMeta(db);
-  const payload = await parsePayload(request);
+  const meta = await getLatestDrawMeta(db);
+  const deployVer = env.CF_PAGES_COMMIT_SHA || "dev";
+  const version = `${meta.latestDrawNo || "v0"}_${deployVer}`;
+
+  const parsed = await parsePayload(request);
+  const payload = parsed.payload || {};
+  const debugMode = parsed.debug;
 
   const bets = Array.isArray(payload.bets) ? payload.bets : [];
   const half = Boolean(payload.half);
   const scope = payload.scope || { type: "days", days: 60 };
   const unitStake = half ? 0.5 : 1;
 
-  const pack = await loadDrawsForScope({ db, ctx, latestDrawNo: latest.latestDrawNo, scope });
+  const pack = await loadDrawsForScope({ db, ctx, version, scope });
   const draws = pack.draws || [];
 
   let anyWin = false;
@@ -286,57 +305,131 @@ async function computeCheckResult({ request, env, ctx }) {
     const sp = d.special;
 
     const betResults = bets.map((bet) => {
+      let lines = 0;
+      let wins = winsEmpty();
+      let hasWin = false;
+
       if (bet.type === "banker") {
         const bankers = uniq(bet.bankers || []);
         const others = uniq((bet.others || []).filter((n) => !bankers.includes(n)));
-        const { lines, wins, hasWin } = countHitsBanker(bankers, others, winMain, sp);
-        return { type: "banker", lines, stake: lines * unitStake, wins, hasWin, bankers, others };
+        ({ lines, wins, hasWin } = countHitsBanker(bankers, others, winMain, sp));
+        return {
+          type: "banker",
+          bankers,
+          others,
+          lines,
+          stake: lines * unitStake,
+
+          // keys old UI might use
+          wins,
+          breakdown: wins,
+          prizeCounts: wins,
+
+          hasWin,
+          win: hasWin,
+          bestPrize: bestTier(wins),
+        };
       }
+
       if (bet.type === "multiple") {
         const selected = uniq(bet.numbers || []);
-        const { lines, wins, hasWin } = countHitsMultiple(selected, winMain, sp);
-        return { type: "multiple", lines, stake: lines * unitStake, wins, hasWin, numbers: selected };
+        ({ lines, wins, hasWin } = countHitsMultiple(selected, winMain, sp));
+        return {
+          type: "multiple",
+          numbers: selected,
+          lines,
+          stake: lines * unitStake,
+          wins,
+          breakdown: wins,
+          prizeCounts: wins,
+          hasWin,
+          win: hasWin,
+          bestPrize: bestTier(wins),
+        };
       }
+
+      // single (still computed by formula; if selected length!=6, it behaves like multiple)
       const selected = uniq(bet.numbers || []);
-      const { lines, wins, hasWin } = countHitsMultiple(selected, winMain, sp);
+      ({ lines, wins, hasWin } = countHitsMultiple(selected, winMain, sp));
       const singleLines = selected.length === 6 ? 1 : lines;
-      return { type: "single", lines: singleLines, stake: singleLines * unitStake, wins, hasWin, numbers: selected };
+
+      return {
+        type: "single",
+        numbers: selected,
+        lines: singleLines,
+        stake: singleLines * unitStake,
+        wins,
+        breakdown: wins,
+        prizeCounts: wins,
+        hasWin,
+        win: hasWin,
+        bestPrize: bestTier(wins),
+      };
     });
 
-    const hasWin = betResults.some((b) => b.hasWin);
-    if (hasWin) anyWin = true;
+    const hasWinDraw = betResults.some((b) => b.hasWin);
+    if (hasWinDraw) anyWin = true;
 
-    // ✅ give old UI commonly-used keys
+    // per-draw summary for older UI
+    const drawWins = winsEmpty();
+    for (const b of betResults) {
+      for (const k of Object.keys(drawWins)) drawWins[k] += (b.wins?.[k] || 0);
+    }
+    const prizeLines = Object.values(drawWins).reduce((a, b) => a + b, 0);
+
     return {
       drawNo: d.drawNo,
       drawDate: d.drawDate,
 
+      // winning numbers (old keys)
       numbers: winMain,
       numbersArr: winMain,
       special: sp,
       specialNo: sp,
 
-      hasWin,
+      // old UI summary keys
+      hasWin: hasWinDraw,
+      win: hasWinDraw,
+      prizeLines,
+      wins: drawWins,
+      breakdown: drawWins,
+      prizeCounts: drawWins,
+      bestPrize: bestTier(drawWins),
+
+      // detailed
       betResults,
     };
   });
 
-  return {
+  const response = {
     ok: true,
     anyWin,
-    hasWin: anyWin, // alias
+    hasWin: anyWin,
+    won: anyWin,
 
     meta: {
-      latestDrawNo: latest.latestDrawNo,
-      latestUpdatedAt: latest.latestUpdatedAt,
+      latestDrawNo: meta.latestDrawNo,
+      latestUpdatedAt: meta.latestUpdatedAt,
       scope,
       drawCount: draws.length,
       half,
+      deployVer,
     },
 
     results,
-    draws: results, // alias for older pages
+    draws: results, // alias
   };
+
+  if (debugMode) {
+    response.debug = {
+      received: {
+        betsCount: bets.length,
+        bets,
+      },
+    };
+  }
+
+  return response;
 }
 
 export async function onRequest(context) {
@@ -345,15 +438,19 @@ export async function onRequest(context) {
 
   try {
     if (request.method === "GET") {
+      // ✅ bust cache on every deploy + latest draw
       const db = getDb(env);
       if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
-      const latest = await getLatestDrawMeta(db);
+
+      const meta = await getLatestDrawMeta(db);
+      const deployVer = env.CF_PAGES_COMMIT_SHA || "dev";
+      const version = `${meta.latestDrawNo || "v0"}_${deployVer}`;
 
       return edgeCacheJsonResponse({
         request,
         ctx,
         cacheKeyNamespace: "api_check",
-        version: latest.latestDrawNo || "v0",
+        version,
         ttl: 10,
         swr: 60,
         cacheControlMaxAge: 0,
