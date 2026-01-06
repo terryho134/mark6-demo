@@ -8,16 +8,13 @@ import {
 function jsonError(err, status = 500) {
   const msg =
     err instanceof Error ? `${err.message}\n${err.stack || ""}` : String(err);
-  return new Response(
-    JSON.stringify({ ok: false, error: msg }),
-    {
-      status,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    }
-  );
+  return new Response(JSON.stringify({ ok: false, error: msg }), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 function ymd(d) {
@@ -44,7 +41,6 @@ export async function onRequestGet(context) {
     if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
 
     const url = new URL(request.url);
-
     const meta = await getLatestDrawMeta(db);
 
     return edgeCacheJsonResponse({
@@ -57,7 +53,7 @@ export async function onRequestGet(context) {
       cacheControlMaxAge: 0,
       cacheControlSMaxAge: 30,
       computeJson: async () => {
-        // Support both your old params + new params safely
+        // support old/new param names
         const daysParam = url.searchParams.get("days") || url.searchParams.get("day");
         const issuesParam =
           url.searchParams.get("issues") ||
@@ -97,12 +93,11 @@ export async function onRequestGet(context) {
             .all();
           rows = res.results || [];
         } else {
-          // Default days=60
           const d = days > 0 ? days : 60;
           const start = new Date(Date.now() - d * 86400000);
           const startStr = ymd(start);
 
-          // IMPORTANT: use the composite index path
+          // IMPORTANT: composite-index-friendly order
           const res = await db
             .prepare(
               `SELECT drawNo, drawDate, numbers, special, year, updatedAt
@@ -115,18 +110,37 @@ export async function onRequestGet(context) {
           rows = res.results || [];
         }
 
+        // ✅ Backward-compatible draw shape:
+        // - numbers: array
+        // - special: number
+        // keep numbersStr/specialStr too
+        const draws = rows.map((r) => {
+          const numbersArr = parseNums(r.numbers);
+          const specialNo = Number(r.special);
+          return {
+            drawNo: r.drawNo,
+            drawDate: r.drawDate,
+            year: r.year,
+            updatedAt: r.updatedAt,
+
+            // old UI expects these:
+            numbers: numbersArr,
+            special: specialNo,
+
+            // keep originals for debugging / other pages:
+            numbersStr: r.numbers,
+            specialStr: r.special,
+          };
+        });
+
         return {
           ok: true,
           meta: {
             latestDrawNo: meta.latestDrawNo,
             latestUpdatedAt: meta.latestUpdatedAt,
-            returned: rows.length,
+            returned: draws.length,
           },
-          draws: rows.map((r) => ({
-            ...r,
-            numbersArr: parseNums(r.numbers),
-            specialNo: Number(r.special),
-          })),
+          draws,
         };
       },
     });
