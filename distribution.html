@@ -111,6 +111,63 @@
   <p><a href="/">返回首頁</a></p>
 
 <script>
+  async function fetchJsonNoStore(url) {
+    const u = new URL(url, location.origin);
+    // 1) 強制瀏覽器不 cache
+    // 2) 加 __ts 令瀏覽器每次都真正發 request（你 edge cache 仍會命中，因為 canonicalizeUrl 會移除 __ts）
+    u.searchParams.set("__ts", Date.now().toString());
+  
+    const res = await fetch(u.toString(), {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache" },
+    });
+  
+    const text = await res.text();
+    try {
+      const data = JSON.parse(text);
+      return data;
+    } catch (e) {
+      throw new Error(`API returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+    }
+  }
+  
+  function toNum(x, fallback = 0) {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  
+  function parseNumsAny(x) {
+    if (Array.isArray(x)) return x.map((v) => toNum(v)).filter((n) => n >= 1 && n <= 49);
+    if (typeof x === "string") {
+      return x
+        .split(/[^0-9]+/)
+        .filter(Boolean)
+        .map((v) => toNum(v))
+        .filter((n) => n >= 1 && n <= 49);
+    }
+    return [];
+  }
+  
+  function normalizeDraw(d) {
+    const nums =
+      parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
+      parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
+      parseNumsAny(d.numbersStr);
+  
+    const sp =
+      Number.isFinite(Number(d.specialNo)) ? Number(d.specialNo) :
+      Number.isFinite(Number(d.special)) ? Number(d.special) :
+      Number.isFinite(Number(d.specialStr)) ? Number(d.specialStr) :
+      0;
+  
+    return {
+      drawNo: d.drawNo,
+      drawDate: d.drawDate,
+      numbers: nums,
+      special: sp,
+    };
+  }
+
   const statusEl = document.getElementById("status");
   const errorEl = document.getElementById("error");
   const tbl = document.getElementById("tbl");
