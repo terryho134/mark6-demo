@@ -68,308 +68,298 @@
 
   <p><a href="/">返回首頁</a></p>
 
-<script>
-  async function fetchJsonNoStore(url) {
-    const u = new URL(url, location.origin);
-    // 1) 強制瀏覽器不 cache
-    // 2) 加 __ts 令瀏覽器每次都真正發 request（你 edge cache 仍會命中，因為 canonicalizeUrl 會移除 __ts）
-    u.searchParams.set("__ts", Date.now().toString());
+  <script>
+    // -------------------------
+    // Helpers: no-store fetch + safe number normalize
+    // -------------------------
+    async function fetchJsonNoStore(url) {
+      const u = new URL(url, location.origin);
+      // bust browser cache; edge cache key ignores __ts via canonicalizeUrl
+      u.searchParams.set("__ts", Date.now().toString());
   
-    const res = await fetch(u.toString(), {
-      cache: "no-store",
-      headers: { "Cache-Control": "no-cache" },
-    });
-  
-    const text = await res.text();
-    try {
-      const data = JSON.parse(text);
-      return data;
-    } catch (e) {
-      throw new Error(`API returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
-    }
-  }
-  
-  function toNum(x, fallback = 0) {
-    const n = Number(x);
-    return Number.isFinite(n) ? n : fallback;
-  }
-  
-  function parseNumsAny(x) {
-    if (Array.isArray(x)) return x.map((v) => toNum(v)).filter((n) => n >= 1 && n <= 49);
-    if (typeof x === "string") {
-      return x
-        .split(/[^0-9]+/)
-        .filter(Boolean)
-        .map((v) => toNum(v))
-        .filter((n) => n >= 1 && n <= 49);
-    }
-    return [];
-  }
-  
-  function normalizeDraw(d) {
-    const nums =
-      parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
-      parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
-      parseNumsAny(d.numbersStr);
-  
-    const sp =
-      Number.isFinite(Number(d.specialNo)) ? Number(d.specialNo) :
-      Number.isFinite(Number(d.special)) ? Number(d.special) :
-      Number.isFinite(Number(d.specialStr)) ? Number(d.specialStr) :
-      0;
-  
-    return {
-      drawNo: d.drawNo,
-      drawDate: d.drawDate,
-      numbers: nums,
-      special: sp,
-    };
-  }
-
-  const thead = document.getElementById("thead");
-  const tbody = document.getElementById("tbody");
-  const errEl = document.getElementById("err");
-  const totalPill = document.getElementById("totalPill");
-  const hintEl = document.getElementById("hint");
-
-  // 紅/藍 10 級（深→淺）
-  const RED_10  = ["#7f1d1d","#991b1b","#b91c1c","#dc2626","#ef4444","#f87171","#fca5a5","#fecaca","#fee2e2","#fff1f2"];
-  const BLUE_10 = ["#1e3a8a","#1d4ed8","#2563eb","#3b82f6","#60a5fa","#93c5fd","#bfdbfe","#dbeafe","#eff6ff","#f8fbff"];
-
-  // gap 灰階：用「相對最大 gap」分 10 級；gap=0 淡綠
-  function gapStyle(gap, maxGap){
-    if (gap === 0) return { bg: "#e8f5e9", fg: "#111" }; // 淡綠
-    if (gap == null) return { bg: "#fff", fg: "#111" };
-
-    const lvl = Math.min(10, Math.max(1, Math.ceil((gap / Math.max(1, maxGap)) * 10)));
-    // 由淺灰→深灰（10級）
-    const grays = ["#f7f7f7","#efefef","#e6e6e6","#dcdcdc","#d1d1d1","#c4c4c4","#b5b5b5","#a1a1a1","#8f8f8f","#7a7a7a"];
-    const bg = grays[lvl - 1];
-    const fg = (lvl >= 8) ? "#fff" : "#111";
-    return { bg, fg };
-  }
-
-  // 排序狀態
-  let sortKey = null;
-  let sortDir = "asc"; // asc: 少→多；desc: 多→少
-
-  let raw = null; // { totalDraws, top10, bottom10, items[] }
-
-  function buildHeader(totalDraws){
-    const cols = [
-      { key:"n",    label:"號碼", sortable:true },
-      { key:"gap",  label:"相隔期數（gap）", sortable:true },
-      { key:"total",label:`總次數（自2002-07-04｜共${totalDraws}期）`, sortable:true },
-      { key:"r100", label:"近100期", sortable:true },
-      { key:"r50",  label:"近50期", sortable:true },
-      { key:"r30",  label:"近30期", sortable:true },
-      { key:"r20",  label:"近20期", sortable:true },
-      { key:"r10",  label:"近10期", sortable:true },
-    ];
-
-    const tr = document.createElement("tr");
-    for (const c of cols){
-      const th = document.createElement("th");
-
-      const btn = document.createElement("span");
-      btn.className = "thBtn";
-      btn.innerHTML = `<span>${c.label}</span><span class="arrow">${(sortKey===c.key) ? (sortDir==="asc" ? "▲" : "▼") : "↕"}</span>`;
-      btn.addEventListener("click", ()=>{
-        if (sortKey === c.key) {
-          sortDir = (sortDir === "asc") ? "desc" : "asc";
-        } else {
-          sortKey = c.key;
-          sortDir = "asc"; // 先少→多
-        }
-        render();
+      const res = await fetch(u.toString(), {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache", "accept": "application/json" },
       });
-
-      th.appendChild(btn);
-      tr.appendChild(th);
-    }
-    thead.innerHTML = "";
-    thead.appendChild(tr);
-  }
-
-  function buildRankMaps(items){
-    function ranksFor(key){
-      const desc = [...items].sort((a,b)=> (b[key] - a[key]) || (a.n - b.n));
-      const top = desc.slice(0,10).map(x=>x.n);
-      const bottom = [...desc].slice(-10).sort((a,b)=> (a[key] - b[key]) || (a.n - b.n)).map(x=>x.n);
   
-      const topRank = new Map();    // n -> 0..9（0最深）
-      const bottomRank = new Map(); // n -> 0..9（0最深）
-      top.forEach((n,i)=> topRank.set(n,i));
-      bottom.forEach((n,i)=> bottomRank.set(n,i));
-      return { topRank, bottomRank };
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`API 回傳非 JSON（HTTP ${res.status}）：` + text.slice(0, 200));
+      }
+  
+      if (!res.ok || data.ok !== true) {
+        throw new Error(data.error || `API ok=false（HTTP ${res.status}）`);
+      }
+      return data;
     }
   
-    return {
-      total: ranksFor("total"),
-      r100:  ranksFor("r100"),
-      r50:   ranksFor("r50"),
-      r30:   ranksFor("r30"),
-      r20:   ranksFor("r20"),
-      r10:   ranksFor("r10"),
-    };
-  }
-
-
-  function sortItems(items){
-    if (!sortKey) return items;
-
-    const dir = (sortDir === "asc") ? 1 : -1;
-    const k = sortKey;
-
-    return [...items].sort((a,b)=>{
-      const va = a[k];
-      const vb = b[k];
-
-      // null/undefined 排到最後
-      if (va == null && vb == null) return a.n - b.n;
-      if (va == null) return 1;
-      if (vb == null) return -1;
-
-      // number sort
-      if (va !== vb) return (va - vb) * dir;
-      return (a.n - b.n);
-    });
-  }
-
-  function renderSummaryCards(items){
-    const overdueEl = document.getElementById("overdueList");
-    const hotEl = document.getElementById("hot10List");
-    if (!overdueEl || !hotEl) return;
+    function toNum(x, fallback = 0) {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : fallback;
+    }
   
-    // 1) 10個最耐未開：gap 最大 10 個
-    const overdue = [...items]
-      .filter(x => x.gap != null)
-      .sort((a,b)=> (b.gap - a.gap) || (a.n - b.n))
-      .slice(0, 10);
+    // Normalize a stats row from any legacy API shape to the exact fields this UI expects
+    function normalizeStatRow(r) {
+      const n = toNum(r.n ?? r.no ?? r.number ?? r.num ?? r.ball, 0);
   
-    overdueEl.innerHTML = overdue.map(x => `
-      <div class="chip">
-        <div class="n">${x.n}</div>
-        <div class="sub">${x.gap} 期未開</div>
-      </div>
-    `).join("");
+      return {
+        // UI expects these keys:
+        n,
+        gap: (r.gap == null ? null : toNum(r.gap, null)),
+        total: toNum(r.total ?? r.totalCount ?? r.count ?? r.times ?? r.freq, 0),
+        r100: toNum(r.r100 ?? r.last100 ?? r.recent100 ?? r.near100, 0),
+        r50:  toNum(r.r50  ?? r.last50  ?? r.recent50  ?? r.near50, 0),
+        r30:  toNum(r.r30  ?? r.last30  ?? r.recent30  ?? r.near30, 0),
+        r20:  toNum(r.r20  ?? r.last20  ?? r.recent20  ?? r.near20, 0),
+        r10:  toNum(r.r10  ?? r.last10  ?? r.recent10  ?? r.near10, 0),
+      };
+    }
   
-    // 2) 近10期最多：找 r10 最大值，顯示所有並列
-    const max10 = Math.max(...items.map(x => Number(x.r10 || 0)));
-    const hot = items
-      .filter(x => Number(x.r10 || 0) === max10 && max10 > 0)
-      .sort((a,b)=> a.n - b.n);
+    // -------------------------
+    // DOM
+    // -------------------------
+    const thead = document.getElementById("thead");
+    const tbody = document.getElementById("tbody");
+    const errEl = document.getElementById("err");
+    const totalPill = document.getElementById("totalPill");
+    const hintEl = document.getElementById("hint");
   
-    if (max10 <= 0 || hot.length === 0){
-      hotEl.innerHTML = `<div class="muted">近10期未有資料或全部為 0。</div>`;
-    } else {
-      hotEl.innerHTML = hot.map(x => `
+    // 紅/藍 10 級（深→淺）
+    const RED_10  = ["#7f1d1d","#991b1b","#b91c1c","#dc2626","#ef4444","#f87171","#fca5a5","#fecaca","#fee2e2","#fff1f2"];
+    const BLUE_10 = ["#1e3a8a","#1d4ed8","#2563eb","#3b82f6","#60a5fa","#93c5fd","#bfdbfe","#dbeafe","#eff6ff","#f8fbff"];
+  
+    // gap 灰階：用「相對最大 gap」分 10 級；gap=0 淡綠
+    function gapStyle(gap, maxGap){
+      if (gap === 0) return { bg: "#e8f5e9", fg: "#111" }; // 淡綠
+      if (gap == null) return { bg: "#fff", fg: "#111" };
+  
+      const lvl = Math.min(10, Math.max(1, Math.ceil((gap / Math.max(1, maxGap)) * 10)));
+      const grays = ["#f7f7f7","#efefef","#e6e6e6","#dcdcdc","#d1d1d1","#c4c4c4","#b5b5b5","#a1a1a1","#8f8f8f","#7a7a7a"];
+      const bg = grays[lvl - 1];
+      const fg = (lvl >= 8) ? "#fff" : "#111";
+      return { bg, fg };
+    }
+  
+    // 排序狀態
+    let sortKey = null;
+    let sortDir = "asc"; // asc: 少→多；desc: 多→少
+  
+    // rawNormalized structure:
+    // { totalDraws:number, items:[{n,gap,total,r100,r50,r30,r20,r10}] }
+    let raw = null;
+  
+    function buildHeader(totalDraws){
+      const cols = [
+        { key:"n",    label:"號碼", sortable:true },
+        { key:"gap",  label:"相隔期數（gap）", sortable:true },
+        { key:"total",label:`總次數（自2002-07-04｜共${totalDraws}期）`, sortable:true },
+        { key:"r100", label:"近100期", sortable:true },
+        { key:"r50",  label:"近50期", sortable:true },
+        { key:"r30",  label:"近30期", sortable:true },
+        { key:"r20",  label:"近20期", sortable:true },
+        { key:"r10",  label:"近10期", sortable:true },
+      ];
+  
+      const tr = document.createElement("tr");
+      for (const c of cols){
+        const th = document.createElement("th");
+  
+        const btn = document.createElement("span");
+        btn.className = "thBtn";
+        btn.innerHTML = `<span>${c.label}</span><span class="arrow">${(sortKey===c.key) ? (sortDir==="asc" ? "▲" : "▼") : "↕"}</span>`;
+        btn.addEventListener("click", ()=>{
+          if (sortKey === c.key) {
+            sortDir = (sortDir === "asc") ? "desc" : "asc";
+          } else {
+            sortKey = c.key;
+            sortDir = "asc"; // 先少→多
+          }
+          render();
+        });
+  
+        th.appendChild(btn);
+        tr.appendChild(th);
+      }
+      thead.innerHTML = "";
+      thead.appendChild(tr);
+    }
+  
+    function buildRankMaps(items){
+      function ranksFor(key){
+        const desc = [...items].sort((a,b)=> (b[key] - a[key]) || (a.n - b.n));
+        const top = desc.slice(0,10).map(x=>x.n);
+        const bottom = [...desc].slice(-10).sort((a,b)=> (a[key] - b[key]) || (a.n - b.n)).map(x=>x.n);
+  
+        const topRank = new Map();
+        const bottomRank = new Map();
+        top.forEach((n,i)=> topRank.set(n,i));
+        bottom.forEach((n,i)=> bottomRank.set(n,i));
+        return { topRank, bottomRank };
+      }
+  
+      return {
+        total: ranksFor("total"),
+        r100:  ranksFor("r100"),
+        r50:   ranksFor("r50"),
+        r30:   ranksFor("r30"),
+        r20:   ranksFor("r20"),
+        r10:   ranksFor("r10"),
+      };
+    }
+  
+    function sortItems(items){
+      if (!sortKey) return items;
+  
+      const dir = (sortDir === "asc") ? 1 : -1;
+      const k = sortKey;
+  
+      return [...items].sort((a,b)=>{
+        const va = a[k];
+        const vb = b[k];
+  
+        // null/undefined 排到最後
+        if (va == null && vb == null) return a.n - b.n;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+  
+        if (va !== vb) return (va - vb) * dir;
+        return (a.n - b.n);
+      });
+    }
+  
+    function renderSummaryCards(items){
+      const overdueEl = document.getElementById("overdueList");
+      const hotEl = document.getElementById("hot10List");
+      if (!overdueEl || !hotEl) return;
+  
+      const overdue = [...items]
+        .filter(x => x.gap != null)
+        .sort((a,b)=> (b.gap - a.gap) || (a.n - b.n))
+        .slice(0, 10);
+  
+      overdueEl.innerHTML = overdue.map(x => `
         <div class="chip">
           <div class="n">${x.n}</div>
-          <div class="sub">開 ${x.r10} 次</div>
+          <div class="sub">${x.gap} 期未開</div>
         </div>
       `).join("");
-    }
-  }
-
-
-  function render(){
-    errEl.textContent = "";
-    if (!raw) return;
-
-    const items = raw.items || [];
-    const maxGap = Math.max(...items.map(x => (x.gap == null ? 0 : x.gap)));
-
-    const ranks = buildRankMaps(items);
-
-    buildHeader(raw.totalDraws);
-
-    const sorted = sortItems(items);
-
-    tbody.innerHTML = "";
-    for (const it of sorted){
-      const tr = document.createElement("tr");
-
-      // 1) 號碼
-      tr.appendChild(tdText(String(it.n)));
-
-      // 2) gap（灰階，gap=0 淡綠）
-      const tdGap = tdText(it.gap == null ? "—" : String(it.gap));
-      const gs = gapStyle(it.gap, maxGap);
-      tdGap.style.background = gs.bg;
-      tdGap.style.color = gs.fg;
-      tr.appendChild(tdGap);
-
-      // 3) 總次數（Top10 紅 / Bottom10 藍，10級）
-      const tdTotal = tdText(String(it.total));
-      if (ranks.total.topRank.has(it.n)) {
-        const i = ranks.total.topRank.get(it.n);
-        tdTotal.style.background = RED_10[i];
-        tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
-      } else if (ranks.total.bottomRank.has(it.n)) {
-        const i = ranks.total.bottomRank.get(it.n);
-        tdTotal.style.background = BLUE_10[i];
-        tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
+  
+      const max10 = Math.max(...items.map(x => Number(x.r10 || 0)));
+      const hot = items
+        .filter(x => Number(x.r10 || 0) === max10 && max10 > 0)
+        .sort((a,b)=> a.n - b.n);
+  
+      if (max10 <= 0 || hot.length === 0){
+        hotEl.innerHTML = `<div class="muted">近10期未有資料或全部為 0。</div>`;
+      } else {
+        hotEl.innerHTML = hot.map(x => `
+          <div class="chip">
+            <div class="n">${x.n}</div>
+            <div class="sub">開 ${x.r10} 次</div>
+          </div>
+        `).join("");
       }
-
-      tr.appendChild(tdTotal);
-
-      function tdHeat(key, val){
-        const td = tdText(String(val));
-        const rk = ranks[key];
-      
-        if (rk.topRank.has(it.n)) {
-          const i = rk.topRank.get(it.n);
-          td.style.background = RED_10[i];
-          td.style.color = (i <= 5) ? "#fff" : "#111";
-        } else if (rk.bottomRank.has(it.n)) {
-          const i = rk.bottomRank.get(it.n);
-          td.style.background = BLUE_10[i];
-          td.style.color = (i <= 5) ? "#fff" : "#111";
+    }
+  
+    function render(){
+      errEl.textContent = "";
+      if (!raw) return;
+  
+      const items = raw.items || [];
+      const maxGap = Math.max(...items.map(x => (x.gap == null ? 0 : x.gap)));
+  
+      const ranks = buildRankMaps(items);
+  
+      buildHeader(raw.totalDraws);
+  
+      const sorted = sortItems(items);
+  
+      tbody.innerHTML = "";
+      for (const it of sorted){
+        const tr = document.createElement("tr");
+  
+        // 1) 號碼
+        tr.appendChild(tdText(String(it.n)));
+  
+        // 2) gap（灰階，gap=0 淡綠）
+        const tdGap = tdText(it.gap == null ? "—" : String(it.gap));
+        const gs = gapStyle(it.gap, maxGap);
+        tdGap.style.background = gs.bg;
+        tdGap.style.color = gs.fg;
+        tr.appendChild(tdGap);
+  
+        // 3) 總次數（Top10 紅 / Bottom10 藍，10級）
+        const tdTotal = tdText(String(it.total));
+        if (ranks.total.topRank.has(it.n)) {
+          const i = ranks.total.topRank.get(it.n);
+          tdTotal.style.background = RED_10[i];
+          tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
+        } else if (ranks.total.bottomRank.has(it.n)) {
+          const i = ranks.total.bottomRank.get(it.n);
+          tdTotal.style.background = BLUE_10[i];
+          tdTotal.style.color = (i <= 5) ? "#fff" : "#111";
         }
-        return td;
+        tr.appendChild(tdTotal);
+  
+        function tdHeat(key, val){
+          const td = tdText(String(val));
+          const rk = ranks[key];
+  
+          if (rk.topRank.has(it.n)) {
+            const i = rk.topRank.get(it.n);
+            td.style.background = RED_10[i];
+            td.style.color = (i <= 5) ? "#fff" : "#111";
+          } else if (rk.bottomRank.has(it.n)) {
+            const i = rk.bottomRank.get(it.n);
+            td.style.background = BLUE_10[i];
+            td.style.color = (i <= 5) ? "#fff" : "#111";
+          }
+          return td;
+        }
+  
+        tr.appendChild(tdHeat("r100", it.r100));
+        tr.appendChild(tdHeat("r50",  it.r50));
+        tr.appendChild(tdHeat("r30",  it.r30));
+        tr.appendChild(tdHeat("r20",  it.r20));
+        tr.appendChild(tdHeat("r10",  it.r10));
+  
+        tbody.appendChild(tr);
       }
-      
-      tr.appendChild(tdHeat("r100", it.r100));
-      tr.appendChild(tdHeat("r50",  it.r50));
-      tr.appendChild(tdHeat("r30",  it.r30));
-      tr.appendChild(tdHeat("r20",  it.r20));
-      tr.appendChild(tdHeat("r10",  it.r10));
-
-
-      tbody.appendChild(tr);
+  
+      hintEl.textContent = sortKey ? `排序：${sortKey}（${sortDir==="asc" ? "少→多" : "多→少"}）` : "";
     }
-
-    hintEl.textContent = sortKey ? `排序：${sortKey}（${sortDir==="asc" ? "少→多" : "多→少"}）` : "";
-  }
-
-  function tdText(text){
-    const td = document.createElement("td");
-    td.textContent = text;
-    return td;
-  }
-
-  async function load(){
-    try{
-      const res = await fetch("/api/stats", { headers: { "accept":"application/json" }});
-      const ct = res.headers.get("content-type") || "";
-      if (!ct.includes("application/json")) {
-        const t = await res.text();
-        throw new Error("API 回傳非 JSON（HTTP "+res.status+"）："+t.slice(0,120));
+  
+    function tdText(text){
+      const td = document.createElement("td");
+      td.textContent = text;
+      return td;
+    }
+  
+    async function load(){
+      try{
+        // ✅ Use no-store fetch and normalize fields to stop undefined everywhere
+        const data = await fetchJsonNoStore("/api/stats");
+  
+        const totalDraws = toNum(data.totalDraws ?? data.meta?.totalDraws ?? data.meta?.total, 0);
+        const rowsRaw = data.items || data.rows || data.stats || data.data || data.list || [];
+        const items = (rowsRaw || []).map(normalizeStatRow).filter(x => x.n >= 1 && x.n <= 49);
+  
+        raw = { totalDraws, items };
+  
+        totalPill.textContent = `總期數：${toNum(totalDraws, 0).toLocaleString("en-US")}`;
+  
+        renderSummaryCards(items);
+        render();
+      } catch(e){
+        errEl.textContent = "載入失敗：" + e.message;
       }
-      const data = await res.json();
-      if (!res.ok || data.ok !== true) throw new Error(data.error || ("HTTP "+res.status));
-
-      raw = data;
-      totalPill.textContent = `總期數：${data.totalDraws.toLocaleString("en-US")}`;
-      renderSummaryCards(data.items || []);
-      render();
-    } catch(e){
-      errEl.textContent = "載入失敗：" + e.message;
     }
-  }
+  
+    load();
+  </script>
 
-  load();
-</script>
 </body>
 </html>
