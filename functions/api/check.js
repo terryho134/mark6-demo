@@ -118,7 +118,7 @@ async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
             `SELECT drawNo, drawDate, numbers, special
              FROM draws
              WHERE drawDate >= ?
-             ORDER BY CAST(drawNo AS INTEGER) DESC`
+             ORDER BY drawDate DESC, CAST(drawNo AS INTEGER) DESC`
           )
           .bind(startStr)
           .all();
