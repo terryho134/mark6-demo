@@ -1,5 +1,19 @@
 // functions/_lib/edgeCache.js
 
+// Add this near top of edgeCache.js
+export function getDb(env) {
+  // Try common binding names
+  return (
+    env.DB ||
+    env.MARK6_DB ||
+    env.MARK6DB ||
+    env.D1 ||
+    env.database ||
+    env.db ||
+    null
+  );
+}
+
 /** Sort query params + remove nocache params for stable cache key */
 export function canonicalizeUrl(url) {
   const u = new URL(url);
