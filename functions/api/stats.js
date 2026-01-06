@@ -1,5 +1,21 @@
 // functions/api/stats.js
-import { edgeCacheJsonResponse, getLatestDrawMeta } from "../_lib/edgeCache.js";
+import {
+  edgeCacheJsonResponse,
+  getLatestDrawMeta,
+  getDb,
+} from "../_lib/edgeCache.js";
+
+function jsonError(err, status = 500) {
+  const msg =
+    err instanceof Error ? `${err.message}\n${err.stack || ""}` : String(err);
+  return new Response(JSON.stringify({ ok: false, error: msg }), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
 
 function parseNums(str) {
   if (!str) return [];
@@ -10,82 +26,87 @@ function parseNums(str) {
 }
 
 export async function onRequestGet({ request, env, ctx }) {
-  const db = env.DB;
-  const meta = await getLatestDrawMeta(db);
+  try {
+    const db = getDb(env);
+    if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
 
-  return edgeCacheJsonResponse({
-    request,
-    ctx,
-    cacheKeyNamespace: "api_stats",
-    version: meta.latestDrawNo || "v0",
-    ttl: 300, // fresh 5m
-    swr: 3600, // stale up to 1h while background refresh
-    cacheControlMaxAge: 0,
-    cacheControlSMaxAge: 300,
-    computeJson: async () => {
-      const res = await db
-        .prepare(
-          `SELECT drawNo, drawDate, numbers, special
-           FROM draws
-           ORDER BY CAST(drawNo AS INTEGER) DESC`
-        )
-        .all();
+    const meta = await getLatestDrawMeta(db);
 
-      const draws = res.results || [];
-      const totalDraws = draws.length;
-      const windows = [100, 50, 30, 20, 10];
+    return edgeCacheJsonResponse({
+      request,
+      ctx,
+      cacheKeyNamespace: "api_stats",
+      version: meta.latestDrawNo || "v0",
+      ttl: 300,
+      swr: 3600,
+      cacheControlMaxAge: 0,
+      cacheControlSMaxAge: 300,
+      computeJson: async () => {
+        const res = await db
+          .prepare(
+            `SELECT drawNo, drawDate, numbers, special
+             FROM draws
+             ORDER BY CAST(drawNo AS INTEGER) DESC`
+          )
+          .all();
 
-      // total counts include numbers + special
-      const totalCount = Array(50).fill(0);
-      const windowCount = Object.fromEntries(windows.map((w) => [w, Array(50).fill(0)]));
+        const draws = res.results || [];
+        const totalDraws = draws.length;
+        const windows = [100, 50, 30, 20, 10];
 
-      // gap based on "numbers" only
-      const lastSeenIdx = Array(50).fill(null);
+        const totalCount = Array(50).fill(0);
+        const windowCount = Object.fromEntries(
+          windows.map((w) => [w, Array(50).fill(0)])
+        );
 
-      draws.forEach((d, idx) => {
-        const nums = parseNums(d.numbers);
-        const sp = Number(d.special);
+        const lastSeenIdx = Array(50).fill(null);
 
-        // gap tracking (numbers only)
-        for (const n of nums) {
-          if (lastSeenIdx[n] === null) lastSeenIdx[n] = idx;
-        }
+        draws.forEach((d, idx) => {
+          const nums = parseNums(d.numbers);
+          const sp = Number(d.special);
 
-        // total counts (numbers + special)
-        for (const n of nums) totalCount[n] += 1;
-        if (sp >= 1 && sp <= 49) totalCount[sp] += 1;
-
-        for (const w of windows) {
-          if (idx < w) {
-            for (const n of nums) windowCount[w][n] += 1;
-            if (sp >= 1 && sp <= 49) windowCount[w][sp] += 1;
+          for (const n of nums) {
+            if (lastSeenIdx[n] === null) lastSeenIdx[n] = idx;
           }
-        }
-      });
 
-      const rows = [];
-      for (let n = 1; n <= 49; n++) {
-        const idx = lastSeenIdx[n];
-        rows.push({
-          no: n,
-          gap: idx === null ? totalDraws : idx, // 0 means appeared in latest draw
-          total: totalCount[n],
-          last100: windowCount[100][n],
-          last50: windowCount[50][n],
-          last30: windowCount[30][n],
-          last20: windowCount[20][n],
-          last10: windowCount[10][n],
+          for (const n of nums) totalCount[n] += 1;
+          if (sp >= 1 && sp <= 49) totalCount[sp] += 1;
+
+          for (const w of windows) {
+            if (idx < w) {
+              for (const n of nums) windowCount[w][n] += 1;
+              if (sp >= 1 && sp <= 49) windowCount[w][sp] += 1;
+            }
+          }
         });
-      }
 
-      return {
-        meta: {
-          latestDrawNo: meta.latestDrawNo,
-          latestUpdatedAt: meta.latestUpdatedAt,
-          totalDraws,
-        },
-        rows,
-      };
-    },
-  });
+        const rows = [];
+        for (let n = 1; n <= 49; n++) {
+          const idx = lastSeenIdx[n];
+          rows.push({
+            no: n,
+            gap: idx === null ? totalDraws : idx,
+            total: totalCount[n],
+            last100: windowCount[100][n],
+            last50: windowCount[50][n],
+            last30: windowCount[30][n],
+            last20: windowCount[20][n],
+            last10: windowCount[10][n],
+          });
+        }
+
+        return {
+          ok: true,
+          meta: {
+            latestDrawNo: meta.latestDrawNo,
+            latestUpdatedAt: meta.latestUpdatedAt,
+            totalDraws,
+          },
+          rows,
+        };
+      },
+    });
+  } catch (err) {
+    return jsonError(err, 500);
+  }
 }
