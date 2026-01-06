@@ -137,31 +137,39 @@
   <p><a href="/">返回首頁</a></p>
 
 <script>
-  async function fetchJsonNoStore(url) {
+  // -------------------------
+  // Helpers
+  // -------------------------
+  async function fetchJsonNoStore(url, fetchInit = {}) {
     const u = new URL(url, location.origin);
-    // 1) 強制瀏覽器不 cache
-    // 2) 加 __ts 令瀏覽器每次都真正發 request（你 edge cache 仍會命中，因為 canonicalizeUrl 會移除 __ts）
+    // bust browser cache; edge cache key ignores __ts via canonicalizeUrl
     u.searchParams.set("__ts", Date.now().toString());
-  
+
     const res = await fetch(u.toString(), {
       cache: "no-store",
-      headers: { "Cache-Control": "no-cache" },
+      headers: {
+        "Cache-Control": "no-cache",
+        "accept": "application/json",
+        ...(fetchInit.headers || {})
+      },
+      ...fetchInit,
     });
-  
+
     const text = await res.text();
+    let data;
     try {
-      const data = JSON.parse(text);
-      return data;
+      data = JSON.parse(text);
     } catch (e) {
-      throw new Error(`API returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
+      throw new Error(`API 回傳非 JSON（HTTP ${res.status}）。前 200 字：` + text.slice(0, 200));
     }
+    return { res, data };
   }
-  
+
   function toNum(x, fallback = 0) {
     const n = Number(x);
     return Number.isFinite(n) ? n : fallback;
   }
-  
+
   function parseNumsAny(x) {
     if (Array.isArray(x)) return x.map((v) => toNum(v)).filter((n) => n >= 1 && n <= 49);
     if (typeof x === "string") {
@@ -173,19 +181,19 @@
     }
     return [];
   }
-  
+
   function normalizeDraw(d) {
     const nums =
       parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
       parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
       parseNumsAny(d.numbersStr);
-  
+
     const sp =
       Number.isFinite(Number(d.specialNo)) ? Number(d.specialNo) :
       Number.isFinite(Number(d.special)) ? Number(d.special) :
       Number.isFinite(Number(d.specialStr)) ? Number(d.specialStr) :
       0;
-  
+
     return {
       drawNo: d.drawNo,
       drawDate: d.drawDate,
@@ -194,9 +202,35 @@
     };
   }
 
+  // Normalize API check response shapes for rendering:
+  // - draw numbers might be in draw.extra or draw.special
+  // - recentWins list might have numbers as string/array
+  function normalizeWinItem(w) {
+    const nums =
+      parseNumsAny(w.numbersArr).length ? parseNumsAny(w.numbersArr) :
+      parseNumsAny(w.numbers).length ? parseNumsAny(w.numbers) :
+      parseNumsAny(w.numbersStr);
+
+    const extra =
+      Number.isFinite(Number(w.extra)) ? Number(w.extra) :
+      Number.isFinite(Number(w.special)) ? Number(w.special) :
+      Number.isFinite(Number(w.specialNo)) ? Number(w.specialNo) :
+      0;
+
+    return {
+      ...w,
+      numbers: nums,
+      extra,
+      fixedTotal: toNum(w.fixedTotal ?? w.fixedAmount?.totalFixed ?? w.fixedAmount?.total ?? w.fixed, 0),
+    };
+  }
+
+  // -------------------------
+  // DOM refs
+  // -------------------------
   const rangeEl = document.getElementById("rangePreset");
   const rangeWrapEl = document.getElementById("rangeWrap");
-  
+
   const multiModeEl = document.getElementById("multiMode");
   const multiControlsEl = document.getElementById("multiControls");
   const multiYearEl = document.getElementById("multiYear");
@@ -215,7 +249,6 @@
   const halfWrapEl = document.getElementById("halfWrap");
   const halfResultWrapEl = document.getElementById("halfResultWrap");
 
-
   const drawDateEl = document.getElementById("drawDate");
   const yearEl = document.getElementById("year");
   const seqEl = document.getElementById("seq");
@@ -228,39 +261,30 @@
 
   const typeEls = Array.from(document.querySelectorAll('input[name="type"]'));
 
+  // -------------------------
   // state
+  // -------------------------
   let type = "single";
   let picks = new Set();
   let bankers = new Set();
   let legs = new Set();
 
-  
   function updateHalfVisibility(){
     const show = (type !== "single"); // 單式：唔顯示半注
-  
     if (!show) {
-      // 單式時強制關閉半注，避免狀態殘留影響計算
       halfEl.checked = false;
       if (halfResultEl) halfResultEl.checked = false;
     }
-  
     if (halfWrapEl) halfWrapEl.style.display = show ? "inline-flex" : "none";
     if (halfResultWrapEl) halfResultWrapEl.style.display = show ? "inline-flex" : "none";
   }
 
   function updateRangeVisibility(){
-    // 有指定單期：日期 or 期數
     const hasSingleTarget = !!drawDateEl.value || !!drawNoEl.value;
-  
-    // 多期模式
-    const isMulti = (typeof multiModeEl !== "undefined" && multiModeEl) ? multiModeEl.checked : false;
-  
-    // 只有「完全無指定」先顯示核對範圍切換
+    const isMulti = (multiModeEl ? multiModeEl.checked : false);
     const show = !hasSingleTarget && !isMulti;
-  
     if (rangeWrapEl) rangeWrapEl.style.display = show ? "inline-flex" : "none";
   }
-
 
   function pad2(x){ return String(x).padStart(2,"0"); }
   function pad3(x){ return String(x).padStart(3,"0"); }
@@ -295,8 +319,7 @@
       multiYearEl.appendChild(opt);
     }
     multiYearEl.value=String(nowY);
-  
-    // seq dropdown 1..200（夠用）
+
     for(let i=1;i<=200;i++){
       const opt=document.createElement("option");
       opt.value=String(i);
@@ -304,14 +327,14 @@
       multiSeqEl.appendChild(opt);
     }
     multiSeqEl.value="1";
-  
+
     function buildStartDrawNo(){
       const y = multiYearEl.value;
       const s = parseInt(multiSeqEl.value,10);
       if(!y || !Number.isFinite(s) || s<=0){ startDrawNoEl.value=""; return; }
       startDrawNoEl.value = `${yyFromYear(y)}/${pad3(s)}`;
     }
-  
+
     multiYearEl.addEventListener("change", buildStartDrawNo);
     multiSeqEl.addEventListener("change", buildStartDrawNo);
     buildStartDrawNo();
@@ -319,26 +342,26 @@
 
   function setMultiMode(on){
     multiControlsEl.style.display = on ? "flex" : "none";
-  
-    // disable single inputs
+
     drawDateEl.disabled = on;
     yearEl.disabled = on;
     seqEl.disabled = on;
     document.getElementById("clearDraw").disabled = on;
-  
+
     if (on) {
-      // 清空單期輸入避免混亂
       drawDateEl.value="";
       seqEl.value="";
       drawNoEl.value="";
       updateRangeVisibility();
     }
   }
-  
-  multiModeEl.addEventListener("change", ()=>{
-    setMultiMode(multiModeEl.checked);
-    updateRangeVisibility();
-  });
+
+  if (multiModeEl) {
+    multiModeEl.addEventListener("change", ()=>{
+      setMultiMode(multiModeEl.checked);
+      updateRangeVisibility();
+    });
+  }
 
   yearEl.addEventListener("change", buildDrawNoFromYearSeq);
   seqEl.addEventListener("input", buildDrawNoFromYearSeq);
@@ -350,6 +373,18 @@
     drawNoEl.value="";
     updateRangeVisibility();
   });
+
+  // range + multiCount change should re-check (NOT inside buildQuery)
+  if (rangeEl) {
+    rangeEl.addEventListener("change", ()=>{
+      if(resultCard.style.display !== "none") runCheck();
+    });
+  }
+  if (multiCountEl) {
+    multiCountEl.addEventListener("change", ()=>{
+      if(resultCard.style.display !== "none") runCheck();
+    });
+  }
 
   // grid buttons 1..49
   function makeGrid(){
@@ -365,20 +400,6 @@
     }
   }
   makeGrid();
-
-  function updateHalfVisibility(){
-    const show = (type !== "single"); // 單式不顯示半注
-  
-    if (!show) {
-      // 單式時強制關閉半注，避免狀態殘留
-      halfEl.checked = false;
-      if (halfResultEl) halfResultEl.checked = false;
-    }
-  
-    if (halfWrapEl) halfWrapEl.style.display = show ? "inline-flex" : "none";
-    if (halfResultWrapEl) halfResultWrapEl.style.display = show ? "inline-flex" : "none";
-  }
-
 
   function setType(newType){
     type=newType;
@@ -413,18 +434,16 @@
       return;
     }
 
-    // banker mode: click cycle => off -> banker -> leg -> off
+    // banker mode: off -> banker -> leg -> off
     if(bankers.has(n)){
       bankers.delete(n);
       legs.add(n);
     } else if(legs.has(n)){
       legs.delete(n);
     } else {
-      // new: add as banker if bankers <5, else as leg
       if(bankers.size < 5) bankers.add(n);
       else legs.add(n);
     }
-    // prevent overlap
     for(const x of bankers) if(legs.has(x)) legs.delete(x);
 
     syncInputFromState();
@@ -477,7 +496,6 @@
 
       const bset = new Set(b);
       const lset = new Set(l);
-      // remove overlaps from legs
       for(const x of bset) if(lset.has(x)) lset.delete(x);
 
       bankers = new Set(Array.from(bset).filter(n=>n>=1 && n<=49));
@@ -523,7 +541,6 @@
       return true;
     }
 
-    // banker
     if(bankers.size<1 || bankers.size>5){
       if(showError) inputErrEl.textContent="膽拖：膽需要 1–5 個。";
       updateChancesStake(0, unitStake);
@@ -578,7 +595,6 @@
   });
 
   let syncingHalf = false;
-  
   function syncHalfUI(from) {
     if (syncingHalf) return;
     syncingHalf = true;
@@ -587,13 +603,13 @@
     if (halfResultEl) halfResultEl.checked = v;
     syncingHalf = false;
   }
-  
+
   halfEl.addEventListener("change", ()=>{
     syncHalfUI(halfEl);
     updateChancesStake();
     if(resultCard.style.display !== "none") runCheck();
   });
-  
+
   if (halfResultEl) {
     halfResultEl.addEventListener("change", ()=>{
       syncHalfUI(halfResultEl);
@@ -602,105 +618,119 @@
     });
   }
 
+  // -------------------------
+  // IMPORTANT: make payload match API expected shape
+  // -------------------------
+  function buildScope(){
+    // Multi mode first
+    if (multiModeEl && multiModeEl.checked) {
+      return {
+        multi: true,
+        startDrawNo: startDrawNoEl.value.trim(),
+        multiCount: toNum(multiCountEl.value, 10) || 10,
+      };
+    }
 
-  function ticketPayload(){
-    const half = (type==="single") ? false : halfEl.checked;
-    if(type==="single" || type==="multiple"){
-      return { type, half, picks: Array.from(picks).sort((a,b)=>a-b) };
+    const drawNo = (drawNoEl.value || "").trim();
+    const drawDate = (drawDateEl.value || "").trim();
+
+    if (drawNo) return { drawNo };
+    if (drawDate) return { drawDate };
+
+    // Range preset
+    return { rangePreset: rangeEl ? rangeEl.value : "60days" };
+  }
+
+  function buildTicket(){
+    const half = (type==="single") ? false : !!halfEl.checked;
+
+    if(type==="single"){
+      return { type: "single", half, picks: Array.from(picks).sort((a,b)=>a-b) };
+    }
+    if(type==="multiple"){
+      return { type: "multiple", half, picks: Array.from(picks).sort((a,b)=>a-b) };
     }
     return {
-      type,
+      type: "banker",
       half,
       bankers: Array.from(bankers).sort((a,b)=>a-b),
       legs: Array.from(legs).sort((a,b)=>a-b),
     };
   }
 
-  function buildQuery(){      
-    // 多期模式優先
-    if (multiModeEl.checked) {
-      return {
-        multi: true,
-        startDrawNo: startDrawNoEl.value.trim(),
-        multiCount: parseInt(multiCountEl.value, 10),
-      };
-    }
-  
-    const drawNo = drawNoEl.value.trim();
-    const drawDate = drawDateEl.value;
-  
-    // drawNo priority if exists
-    if(drawNo) return { drawNo };
-    if(drawDate) return { drawDate };
+  function buildApiPayload(){
+    // Preferred modern shape: { bets:[...], half, scope }
+    // We'll send both new AND legacy keys for compatibility.
+    const ticket = buildTicket();
+    const scope = buildScope();
 
-    if (rangeEl) {
-      rangeEl.addEventListener("change", ()=>{
-        if(resultCard.style.display !== "none") runCheck();
-      });
-    }
-    
-    multiCountEl.addEventListener("change", ()=>{
-      if(resultCard.style.display !== "none") runCheck();
-    });
-  
-    // 無指定：用 range preset（預設 60days）
-    return { rangePreset: rangeEl ? rangeEl.value : "60days" };
+    const bets =
+      ticket.type === "banker"
+        ? [{ type: "banker", bankers: ticket.bankers, others: ticket.legs }]
+        : ticket.type === "multiple"
+        ? [{ type: "multiple", numbers: ticket.picks }]
+        : [{ type: "single", numbers: ticket.picks }];
+
+    return {
+      // new shape
+      bets,
+      half: ticket.half,
+      scope,
+
+      // legacy shape (keep, in case your API still reads these)
+      ...ticket,
+      ...scope,
+    };
   }
-
 
   function fmtYMD(ymd){
     if(!ymd) return "";
-    const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if(!m) return ymd;
     return `${m[1]}年${m[2]}月${m[3]}日`;
   }
 
   function renderMain(main){
-    const d = main.draw;
-    const t = main.ticket;
-    const r = main.result;
+    const dRaw = main.draw || {};
+    const d = {
+      drawNo: dRaw.drawNo,
+      drawDate: dRaw.drawDate,
+      numbers: parseNumsAny(dRaw.numbers).length ? parseNumsAny(dRaw.numbers) : (dRaw.numbers || []),
+      extra: Number.isFinite(Number(dRaw.extra)) ? Number(dRaw.extra) : Number(dRaw.special || 0),
+    };
+
+    const t = main.ticket || {};
+    const r = main.result || {};
     const hit = r.bestHit;
+
     const hitText = hit
       ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
       : "";
 
-
-    const fixed = r.fixedAmount;
+    const fixed = r.fixedAmount || {};
     const lines = [];
 
     lines.push(`<div><strong>攪珠：</strong>${d.drawNo}（${fmtYMD(d.drawDate)}）</div>`);
-    lines.push(`<div class="muted">正選：${d.numbers.join(" ")}　特別號：${String(d.extra).padStart(2,"0")}</div>`);
+    lines.push(`<div class="muted">正選：${(d.numbers || []).join(" ")}　特別號：${String(d.extra || 0).padStart(2,"0")}</div>`);
 
-    lines.push(`<div style="margin-top:8px;"><strong>你的彩票：</strong>${t.type}｜份數 ${t.chances.toLocaleString("en-US")}｜每份 HK$${t.unitStake}｜投注額 HK$ ${t.totalStake.toLocaleString("en-US")}</div>`);
+    const chances = toNum(t.chances, 0);
+    const unitStake = toNum(t.unitStake, 10);
+    const totalStake = toNum(t.totalStake, chances * unitStake);
 
-    if(r.summary.length===0){
+    lines.push(`<div style="margin-top:8px;"><strong>你的彩票：</strong>${t.type || type}｜份數 ${chances.toLocaleString("en-US")}｜每份 HK$${unitStake}｜投注額 HK$ ${totalStake.toLocaleString("en-US")}</div>`);
+
+    const summary = Array.isArray(r.summary) ? r.summary : [];
+    if(summary.length === 0){
       lines.push(`<div style="margin-top:10px;"><strong>結果：</strong>未中獎</div>`);
-    
-      if (hit && !(hit.main <= 2 && !hit.extra)) {
-        lines.push(`<div class="muted" style="margin-top:6px;">${hitText}（未中獎）</div>`);
-      }
-
-      if (hit) {
-        lines.push(`<div class="muted" style="margin-top:6px;">${hitText}</div>`);
-      }
-      
+      if (hitText) lines.push(`<div class="muted" style="margin-top:6px;">${hitText}（未中獎）</div>`);
       return lines.join("");
     }
 
-
-    const summaryText = r.summary.map(x=>`${x.name} × ${x.units.toLocaleString("en-US")}`).join("，");
+    const summaryText = summary.map(x=>`${x.name} × ${toNum(x.units,0).toLocaleString("en-US")}`).join("，");
     lines.push(`<div style="margin-top:10px;"><strong>中獎：</strong>${summaryText}</div>`);
 
-    // Fixed prizes detail
-    const fixedParts = [];
-    if(main.result.units.div4>0) fixedParts.push(`四獎 HK$${(main.result.units.div4*9600*(t.unitStake/10)).toLocaleString("en-US")}`);
-    if(main.result.units.div5>0) fixedParts.push(`五獎 HK$${(main.result.units.div5*640*(t.unitStake/10)).toLocaleString("en-US")}`);
-    if(main.result.units.div6>0) fixedParts.push(`六獎 HK$${(main.result.units.div6*320*(t.unitStake/10)).toLocaleString("en-US")}`);
-    if(main.result.units.div7>0) fixedParts.push(`七獎 HK$${(main.result.units.div7*40*(t.unitStake/10)).toLocaleString("en-US")}`);
-
-    if(fixed.totalFixed>0){
-      lines.push(`<div style="margin-top:6px;"><strong>固定獎金（四至七獎）：</strong>HK$ ${fixed.totalFixed.toLocaleString("en-US")}</div>`);
-      if(fixedParts.length) lines.push(`<div class="muted">${fixedParts.join("｜")}</div>`);
+    if (toNum(fixed.totalFixed, 0) > 0){
+      lines.push(`<div style="margin-top:6px;"><strong>固定獎金（四至七獎）：</strong>HK$ ${toNum(fixed.totalFixed,0).toLocaleString("en-US")}</div>`);
     }
 
     if(r.topPrizeNote){
@@ -712,26 +742,26 @@
 
   function renderRecent(wins, titleLabel="近60日"){
     const title = `${titleLabel}（只顯示有中獎）`;
-  
+
     if(!wins || wins.length===0){
       return `<h4 style="margin:0 0 8px;">${title}</h4><div class="muted">未有中獎紀錄。</div>`;
     }
-  
-    const items = wins.map(w=>{
-      const s = w.summary.map(x=>`${x.name}×${x.units}`).join("，");
+
+    const items = wins.map(_w=>{
+      const w = normalizeWinItem(_w);
+      const s = (w.summary || []).map(x=>`${x.name}×${x.units}`).join("，");
       const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
       const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
-  
-      // ✅ hit text (best hit for this draw)
+
       const hit = w.bestHit;
       const hitText = hit
         ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
         : "";
-  
+
       const nums = (w.numbers && w.numbers.length)
         ? `正選：${w.numbers.join(" ")}　特別號：${String(w.extra).padStart(2,"0")}`
         : "";
-  
+
       return `
         <li style="margin:10px 0;">
           <div><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</div>
@@ -740,35 +770,34 @@
         </li>
       `;
     }).join("");
-  
+
     return `<h4 style="margin:0 0 8px;">${title}</h4><ol>${items}</ol>`;
   }
 
+  // -------------------------
+  // Run check
+  // -------------------------
   async function runCheck(){
     inputErrEl.textContent="";
     const ok = validateAndShow(true);
     if(!ok) return;
 
     statusEl.textContent="核對中…";
-    
-    // 先顯示結果卡（確保你一定睇到 halfResult）
+
     resultCard.style.display = "block";
     if (halfResultEl) halfResultEl.checked = halfEl.checked;
-    
-    // 顯示 loading 文字
+
     mainResultEl.innerHTML = `<div class="muted">核對中…</div>`;
     recentBlockEl.innerHTML = "";
 
-
-    const payload = Object.assign({}, ticketPayload(), buildQuery());
+    const payload = buildApiPayload();
 
     try{
-      const res = await fetch("/api/check", {
-        method:"POST",
+      const { res, data } = await fetchJsonNoStore("/api/check", {
+        method: "POST",
         headers: { "content-type":"application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
 
       if(!res.ok || !data.ok){
         statusEl.textContent="";
@@ -778,35 +807,34 @@
         return;
       }
 
-
       statusEl.textContent="";
       resultCard.style.display="block";
       if (halfResultEl) halfResultEl.checked = halfEl.checked;
-      
-      const q = data.query || {};
-      const isMulti = !!data.multiInfo;
-      
+
+      // Prefer explicit flags if API provides
+      const q = data.query || data.scope || {};
+      const isMulti = !!data.multiInfo || !!q.multi;
+
       if (isMulti) {
-        // 多期：只顯示 multiWins
-        mainResultEl.innerHTML = `<div><strong>多期核對：</strong>由 ${data.multiInfo.startDrawNo} 起，共 ${data.multiInfo.checked} 期（設定：${data.multiInfo.count} 期）</div>`;
-        recentBlockEl.innerHTML = renderRecent(data.multiWins || [], `多期核對（${data.multiInfo.startDrawNo} 起）`);
+        mainResultEl.innerHTML = `<div><strong>多期核對：</strong>由 ${data.multiInfo?.startDrawNo || q.startDrawNo} 起，共 ${data.multiInfo?.checked || "—"} 期（設定：${data.multiInfo?.count || q.multiCount || "—"} 期）</div>`;
+        recentBlockEl.innerHTML = renderRecent((data.multiWins || []).map(normalizeWinItem), `多期核對（${data.multiInfo?.startDrawNo || q.startDrawNo} 起）`);
       } else if (!q.drawNo && !q.drawDate) {
-        // 範圍：只顯示 recentWins（近60日 / 近30期 / 近60期）
-        mainResultEl.innerHTML = data.rangeInfo?.label
-          ? `<div class="muted">核對範圍：${data.rangeInfo.label}</div>`
-          : "";
+        mainResultEl.innerHTML = data.rangeInfo?.label ? `<div class="muted">核對範圍：${data.rangeInfo.label}</div>` : "";
         const label = data.rangeInfo?.label || "近60日";
-        recentBlockEl.innerHTML = renderRecent(data.recentWins || [], label);
+        recentBlockEl.innerHTML = renderRecent((data.recentWins || []).map(normalizeWinItem), label);
       } else {
-        // 指定單期：顯示 main
         mainResultEl.innerHTML = renderMain(data.main);
         recentBlockEl.innerHTML = "";
       }
 
+      // Optional: dev debug
+      // console.log("check payload", payload);
+      // console.log("check response", data);
 
     }catch(e){
       statusEl.textContent="";
       inputErrEl.textContent = "核對失敗：" + e.message;
+      mainResultEl.innerHTML = `<div class="error">核對失敗：${e.message}</div>`;
     }
   }
 
@@ -817,7 +845,7 @@
   updateChancesStake();
   updateHalfVisibility();
   updateRangeVisibility();
-
 </script>
+
 </body>
 </html>
