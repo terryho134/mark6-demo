@@ -29,7 +29,8 @@ function parseNums(str) {
   return String(str)
     .split(/[^0-9]+/)
     .filter(Boolean)
-    .map((x) => Number(x));
+    .map((x) => Number(x))
+    .filter((n) => n >= 1 && n <= 49);
 }
 
 export async function onRequestGet(context) {
@@ -53,7 +54,6 @@ export async function onRequestGet(context) {
       cacheControlMaxAge: 0,
       cacheControlSMaxAge: 30,
       computeJson: async () => {
-        // support old/new param names
         const daysParam = url.searchParams.get("days") || url.searchParams.get("day");
         const issuesParam =
           url.searchParams.get("issues") ||
@@ -97,7 +97,6 @@ export async function onRequestGet(context) {
           const start = new Date(Date.now() - d * 86400000);
           const startStr = ymd(start);
 
-          // IMPORTANT: composite-index-friendly order
           const res = await db
             .prepare(
               `SELECT drawNo, drawDate, numbers, special, year, updatedAt
@@ -110,24 +109,25 @@ export async function onRequestGet(context) {
           rows = res.results || [];
         }
 
-        // ✅ Backward-compatible draw shape:
-        // - numbers: array
-        // - special: number
-        // keep numbersStr/specialStr too
         const draws = rows.map((r) => {
           const numbersArr = parseNums(r.numbers);
           const specialNo = Number(r.special);
+
           return {
             drawNo: r.drawNo,
             drawDate: r.drawDate,
             year: r.year,
             updatedAt: r.updatedAt,
 
-            // old UI expects these:
+            // ✅ most old pages use these
             numbers: numbersArr,
             special: specialNo,
 
-            // keep originals for debugging / other pages:
+            // ✅ aliases (很多舊 JS 會用)
+            numbersArr,
+            specialNo,
+
+            // keep originals too
             numbersStr: r.numbers,
             specialStr: r.special,
           };
