@@ -110,221 +110,230 @@
 
   <p><a href="/">返回首頁</a></p>
 
-<script>
-  async function fetchJsonNoStore(url) {
-    const u = new URL(url, location.origin);
-    // 1) 強制瀏覽器不 cache
-    // 2) 加 __ts 令瀏覽器每次都真正發 request（你 edge cache 仍會命中，因為 canonicalizeUrl 會移除 __ts）
-    u.searchParams.set("__ts", Date.now().toString());
+  <script>
+    // -------------------------
+    // Helpers: no-store fetch + normalize draws
+    // -------------------------
+    async function fetchJsonNoStore(url) {
+      const u = new URL(url, location.origin);
+      // bust browser cache; edge cache key ignores __ts via canonicalizeUrl
+      u.searchParams.set("__ts", Date.now().toString());
   
-    const res = await fetch(u.toString(), {
-      cache: "no-store",
-      headers: { "Cache-Control": "no-cache" },
-    });
+      const res = await fetch(u.toString(), {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache", "accept": "application/json" },
+      });
   
-    const text = await res.text();
-    try {
-      const data = JSON.parse(text);
-      return data;
-    } catch (e) {
-      throw new Error(`API returned non-JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
-    }
-  }
-  
-  function toNum(x, fallback = 0) {
-    const n = Number(x);
-    return Number.isFinite(n) ? n : fallback;
-  }
-  
-  function parseNumsAny(x) {
-    if (Array.isArray(x)) return x.map((v) => toNum(v)).filter((n) => n >= 1 && n <= 49);
-    if (typeof x === "string") {
-      return x
-        .split(/[^0-9]+/)
-        .filter(Boolean)
-        .map((v) => toNum(v))
-        .filter((n) => n >= 1 && n <= 49);
-    }
-    return [];
-  }
-  
-  function normalizeDraw(d) {
-    const nums =
-      parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
-      parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
-      parseNumsAny(d.numbersStr);
-  
-    const sp =
-      Number.isFinite(Number(d.specialNo)) ? Number(d.specialNo) :
-      Number.isFinite(Number(d.special)) ? Number(d.special) :
-      Number.isFinite(Number(d.specialStr)) ? Number(d.specialStr) :
-      0;
-  
-    return {
-      drawNo: d.drawNo,
-      drawDate: d.drawDate,
-      numbers: nums,
-      special: sp,
-    };
-  }
-
-  const statusEl = document.getElementById("status");
-  const errorEl = document.getElementById("error");
-  const tbl = document.getElementById("tbl");
-  const presetBtns = Array.from(document.querySelectorAll(".preset"));
-  const reloadBtn = document.getElementById("reload");
-
-  let currentN = 20;
-
-  function pad2(n){ return String(n).padStart(2, "0"); }
-  function fmtN(n){ return String(n); } // 1-49 不補零
-
-  const RED = new Set([1,2,7,8,12,13,18,19,23,24,29,30,34,35,40,45,46]);
-  const BLUE = new Set([3,4,9,10,14,15,20,25,26,31,36,37,41,42,47,48]);
-  const GREEN = new Set([5,6,11,16,17,21,22,27,28,32,33,38,39,43,44,49]);
-  
-  function ballColor(n){
-    if (RED.has(n)) return "red";
-    if (BLUE.has(n)) return "blue";
-    return "green";
-  }
-
-
-  function fmtYMD(ymd){
-    if(!ymd) return "";
-    // accept YYYY-MM-DD
-    const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if(m) return `${m[2]}/${m[3]}`; // show MM/DD compact
-    return ymd;
-  }
-
-  function setActivePreset(n){
-    currentN = n;
-    presetBtns.forEach(b => b.classList.toggle("on", Number(b.dataset.n) === n));
-  }
-
-  async function fetchDraws(limit){
-    const res = await fetch(`/api/draws?limit=${limit}`, { headers: { "accept":"application/json" } });
-    const ct = res.headers.get("content-type") || "";
-  
-    if(!ct.includes("application/json")){
       const text = await res.text();
-      throw new Error(`API 回傳非 JSON（HTTP ${res.status}）。前 200 字：` + text.slice(0,200));
+      try {
+        const data = JSON.parse(text);
+        if (!res.ok || data.ok !== true) {
+          throw new Error(data.error || `API ok=false（HTTP ${res.status}）`);
+        }
+        return data;
+      } catch (e) {
+        throw new Error(`API 回傳非 JSON（HTTP ${res.status}）。前 200 字：` + text.slice(0, 200));
+      }
     }
   
-    const data = await res.json();
-    if(!res.ok || data.ok !== true){
-      throw new Error(data.error || `API ok=false（HTTP ${res.status}）`);
+    function toNum(x, fallback = 0) {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : fallback;
     }
-    return data.draws || [];
-  }
-
-
-  function buildMatrix(draws){
-    // columns = draws (latest first), rows = 1..49
-    // We build a quick lookup per draw: Set of main numbers and extra
-    const cols = draws.map(d => ({
-      drawNo: d.drawNo,
-      drawDate: d.drawDate,
-      nums: (d.numbers || []).map(Number),   // 6 個正選
-      main: new Set(d.numbers || []),
-      extra: Number(d.extra)                 // 特別號
-    }));
-
-    // header
-    let html = "<thead><tr>";
-    html += `<th class="stickyCol">號碼</th>`;
-    for(const c of cols){
-      html += `<th>${c.drawNo}<span class="small">${fmtYMD(c.drawDate)}</span></th>`;
+  
+    function parseNumsAny(x) {
+      if (Array.isArray(x)) return x.map((v) => toNum(v)).filter((n) => n >= 1 && n <= 49);
+      if (typeof x === "string") {
+        return x
+          .split(/[^0-9]+/)
+          .filter(Boolean)
+          .map((v) => toNum(v))
+          .filter((n) => n >= 1 && n <= 49);
+      }
+      return [];
     }
-    html += "</tr></thead>";
-
-    // body
-    html += "<tbody>";
-    for(let n=1; n<=49; n++){
-      html += "<tr>";
-      html += `<td class="stickyCol">${fmtN(n)}</td>`;
-
-    for(const c of cols){
-      if (c.extra === n) {
-        // 特別號：黃色
-        html += `<td class="hitExtra">${fmtN(n)}</td>`;
-      } else if (c.main.has(n)) {
-        // 正選：按波色上色
-        const cc = ballColor(n);
-        html += `<td class="hitMain c-${cc}">${fmtN(n)}</td>`;
-      } else {
-        html += `<td></td>`;
+  
+    function normalizeDraw(d) {
+      const nums =
+        parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
+        parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
+        parseNumsAny(d.numbersStr);
+  
+      // IMPORTANT: your API uses special/specialNo (NOT extra)
+      const sp =
+        Number.isFinite(Number(d.specialNo)) ? Number(d.specialNo) :
+        Number.isFinite(Number(d.special)) ? Number(d.special) :
+        Number.isFinite(Number(d.specialStr)) ? Number(d.specialStr) :
+        0;
+  
+      return {
+        drawNo: d.drawNo,
+        drawDate: d.drawDate,
+        numbers: nums,
+        special: sp,
+      };
+    }
+  
+    // -------------------------
+    // DOM
+    // -------------------------
+    const statusEl = document.getElementById("status");
+    const errorEl = document.getElementById("error");
+    const tbl = document.getElementById("tbl");
+    const presetBtns = Array.from(document.querySelectorAll(".preset"));
+    const reloadBtn = document.getElementById("reload");
+  
+    let currentN = 20;
+  
+    function pad2(n){ return String(n).padStart(2, "0"); }
+    function fmtN(n){ return String(n); } // 1-49 不補零
+  
+    const RED = new Set([1,2,7,8,12,13,18,19,23,24,29,30,34,35,40,45,46]);
+    const BLUE = new Set([3,4,9,10,14,15,20,25,26,31,36,37,41,42,47,48]);
+    const GREEN = new Set([5,6,11,16,17,21,22,27,28,32,33,38,39,43,44,49]);
+  
+    function ballColor(n){
+      if (RED.has(n)) return "red";
+      if (BLUE.has(n)) return "blue";
+      return "green";
+    }
+  
+    function fmtYMD(ymd){
+      if(!ymd) return "";
+      const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if(m) return `${m[2]}/${m[3]}`; // show MM/DD compact
+      return ymd;
+    }
+  
+    function setActivePreset(n){
+      currentN = n;
+      presetBtns.forEach(b => b.classList.toggle("on", Number(b.dataset.n) === n));
+    }
+  
+    // -------------------------
+    // Fetch draws (use /api/draws?issues=N)
+    // Your old code used /api/draws?limit= which API may not support.
+    // -------------------------
+    async function fetchDraws(n){
+      // Use issues to get latest N draws
+      const data = await fetchJsonNoStore(`/api/draws?issues=${encodeURIComponent(n)}`);
+      const drawsRaw = data.draws || data.results || [];
+      return drawsRaw.map(normalizeDraw);
+    }
+  
+    function buildMatrix(draws){
+      // columns = draws (latest first), rows = 1..49
+      // Build lookup per draw
+      const cols = draws.map(d => ({
+        drawNo: d.drawNo,
+        drawDate: d.drawDate,
+  
+        // ensure numbers are numbers
+        nums: (d.numbers || []).map(Number).filter(n => n >= 1 && n <= 49),
+  
+        main: new Set((d.numbers || []).map(Number)),
+        special: Number(d.special) || 0
+      }));
+  
+      // header
+      let html = "<thead><tr>";
+      html += `<th class="stickyCol">號碼</th>`;
+      for(const c of cols){
+        html += `<th>${c.drawNo}<span class="small">${fmtYMD(c.drawDate)}</span></th>`;
+      }
+      html += "</tr></thead>";
+  
+      // body rows 1..49
+      html += "<tbody>";
+      for(let n=1; n<=49; n++){
+        html += "<tr>";
+        html += `<td class="stickyCol">${fmtN(n)}</td>`;
+  
+        for(const c of cols){
+          if (c.special === n) {
+            // 特別號：黃色
+            html += `<td class="hitExtra">${fmtN(n)}</td>`;
+          } else if (c.main.has(n)) {
+            // 正選：按波色上色
+            const cc = ballColor(n);
+            html += `<td class="hitMain c-${cc}">${fmtN(n)}</td>`;
+          } else {
+            html += `<td></td>`;
+          }
+        }
+  
+        html += "</tr>";
+      }
+  
+      // --- summary rows: total & average (7 numbers) ---
+      html += `<tr class="summaryRow">`;
+      html += `<td class="stickyCol summaryLabel">攪出號碼總數</td>`;
+      for (const c of cols) {
+        const sumMain = c.nums.reduce((a,b)=>a+b,0);
+        const total = sumMain + (c.special || 0);
+        html += `<td class="summaryCell">${total}</td>`;
+      }
+      html += `</tr>`;
+  
+      html += `<tr class="summaryRow">`;
+      html += `<td class="stickyCol summaryLabel">攪出號碼平均數</td>`;
+      for (const c of cols) {
+        const sumMain = c.nums.reduce((a,b)=>a+b,0);
+        const total = sumMain + (c.special || 0);
+        const avg = total / 7;
+        html += `<td class="summaryCell">${avg.toFixed(1)}</td>`;
+      }
+      html += `</tr>`;
+  
+      html += `<tr class="summaryRow">`;
+      html += `<td class="stickyCol summaryLabel">平均數大/小</td>`;
+      for (const c of cols) {
+        const sumMain = c.nums.reduce((a,b)=>a+b,0);
+        const total = sumMain + (c.special || 0);
+        const avg = total / 7;
+        // keep your original threshold
+        const tag = (avg >= 24.5) ? "大" : "小";
+        html += `<td class="summaryCell">${tag}</td>`;
+      }
+      html += `</tr>`;
+  
+      html += "</tbody>";
+  
+      tbl.innerHTML = html;
+    }
+  
+    async function load(){
+      errorEl.textContent = "";
+      statusEl.textContent = `載入近 ${currentN} 期…`;
+      tbl.innerHTML = "";
+  
+      try{
+        const draws = await fetchDraws(currentN);
+        if(!draws.length){
+          statusEl.textContent = "未有資料。";
+          return;
+        }
+        statusEl.textContent = `已載入近 ${draws.length} 期（由新到舊）。`;
+        buildMatrix(draws);
+      }catch(e){
+        statusEl.textContent = "";
+        errorEl.textContent = "載入失敗：" + e.message;
       }
     }
-
-      html += "</tr>";
-    }
-
-    // --- summary rows: total & average (6 main + extra) ---
-    html += `<tr class="summaryRow">`;
-    html += `<td class="stickyCol summaryLabel">攪出號碼總數</td>`;
-    for (const c of cols) {
-      const total = c.nums.reduce((a,b)=>a+b,0) + c.extra;
-      html += `<td class="summaryCell">${total}</td>`;
-    }
-    html += `</tr>`;
-    
-    html += `<tr class="summaryRow">`;
-    html += `<td class="stickyCol summaryLabel">攪出號碼平均數</td>`;
-    for (const c of cols) {
-      const total = c.nums.reduce((a,b)=>a+b,0) + c.extra;
-      const avg = total / 7;
-      html += `<td class="summaryCell">${avg.toFixed(1)}</td>`;
-    }
-    html += `</tr>`;
-
-    html += `<tr class="summaryRow">`;
-    html += `<td class="stickyCol summaryLabel">平均數大/小</td>`;
-    for (const c of cols) {
-      const total = c.nums.reduce((a,b)=>a+b,0) + c.extra;
-      const avg = total / 7;
-      const tag = (avg >= 24.5) ? "大" : "小";
-      html += `<td class="summaryCell">${tag}</td>`;
-    }
-    html += `</tr>`;
-
-    html += "</tbody>";
-
-    tbl.innerHTML = html;
-  }
-
-  async function load(){
-    errorEl.textContent = "";
-    statusEl.textContent = `載入近 ${currentN} 期…`;
-    tbl.innerHTML = "";
-
-    try{
-      const draws = await fetchDraws(currentN);
-      if(!draws.length){
-        statusEl.textContent = "未有資料。";
-        return;
-      }
-      statusEl.textContent = `已載入近 ${draws.length} 期（由新到舊）。`;
-      buildMatrix(draws);
-    }catch(e){
-      statusEl.textContent = "";
-      errorEl.textContent = "載入失敗：" + e.message;
-    }
-  }
-
-  presetBtns.forEach(b=>{
-    b.addEventListener("click", ()=>{
-      setActivePreset(Number(b.dataset.n));
-      load();
+  
+    presetBtns.forEach(b=>{
+      b.addEventListener("click", ()=>{
+        setActivePreset(Number(b.dataset.n));
+        load();
+      });
     });
-  });
+  
+    reloadBtn.addEventListener("click", load);
+  
+    // init
+    setActivePreset(20);
+    load();
+  </script>
 
-  reloadBtn.addEventListener("click", load);
-
-  // init
-  setActivePreset(20);
-  load();
-</script>
 </body>
 </html>
