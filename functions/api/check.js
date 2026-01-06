@@ -286,7 +286,10 @@ async function computeCheckResult({ request, env, ctx }) {
  * - Keep GET working (your existing /checker likely uses GET + cache)
  * - POST also works, but we do NOT cache POST by default
  */
-export async function onRequest({ request, env, ctx }) {
+export async function onRequest(context) {
+  const { request, env } = context;
+  const ctx = context;
+
   try {
     if (request.method === "GET") {
       // Cache GET responses by querystring + latestDrawNo version
