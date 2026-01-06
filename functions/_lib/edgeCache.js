@@ -1,5 +1,16 @@
 // functions/_lib/edgeCache.js
 
+function getWaitUntil(ctx) {
+  // Pages Functions: ctx.waitUntil
+  // Some runtimes: ctx.ctx.waitUntil (rare)
+  const fn =
+    (ctx && typeof ctx.waitUntil === "function" && ctx.waitUntil.bind(ctx)) ||
+    (ctx?.ctx && typeof ctx.ctx.waitUntil === "function" && ctx.ctx.waitUntil.bind(ctx.ctx)) ||
+    null;
+
+  return fn || ((p) => p); // no-op fallback
+}
+
 // Add this near top of edgeCache.js
 export function getDb(env) {
   // Try common binding names
