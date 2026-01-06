@@ -35,7 +35,10 @@ function parseNums(str) {
     .map((x) => Number(x));
 }
 
-export async function onRequestGet({ request, env, ctx }) {
+export async function onRequestGet(context) {
+  const { request, env } = context;
+  const ctx = context;
+
   try {
     const db = getDb(env);
     if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
