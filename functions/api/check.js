@@ -23,27 +23,25 @@ function parseNumsStr(s) {
   return String(s)
     .split(/[^0-9]+/)
     .filter(Boolean)
-    .map((x) => Number(x));
+    .map((x) => Number(x))
+    .filter((n) => n >= 1 && n <= 49);
 }
 
-function combos(arr, k) {
-  const res = [];
-  const n = arr.length;
-  if (k < 0 || k > n) return res;
-  const idx = Array.from({ length: k }, (_, i) => i);
+function uniq(arr) {
+  return Array.from(new Set(arr));
+}
 
-  while (true) {
-    res.push(idx.map((i) => arr[i]));
-    let i = k - 1;
-    while (i >= 0 && idx[i] === i + n - k) i--;
-    if (i < 0) break;
-    idx[i]++;
-    for (let j = i + 1; j < k; j++) idx[j] = idx[j - 1] + 1;
+function nCr(n, k) {
+  if (k < 0 || k > n) return 0;
+  k = Math.min(k, n - k);
+  let res = 1;
+  for (let i = 1; i <= k; i++) {
+    res = (res * (n - k + i)) / i;
   }
-  return res;
+  return Math.round(res);
 }
 
-function prizeTier(matchMain, matchSpecial) {
+function tierName(matchMain, matchSpecial) {
   if (matchMain === 6) return "1st";
   if (matchMain === 5 && matchSpecial) return "2nd";
   if (matchMain === 5) return "3rd";
@@ -54,61 +52,155 @@ function prizeTier(matchMain, matchSpecial) {
   return null;
 }
 
-function checkOneLine(line6, draw) {
-  const winMain = new Set(draw.numbersArr);
-  const sp = draw.specialNo;
+function countHitsMultiple(selected, winMainArr, specialNo) {
+  // selected: array of numbers
+  const selSet = new Set(selected);
+  const a = winMainArr.reduce((acc, n) => acc + (selSet.has(n) ? 1 : 0), 0); // 0..6
+  const b = selSet.has(specialNo) ? 1 : 0; // 0/1
+  const n = selected.length;
+  const nonWinNonSpecial = n - a - b;
 
-  let matchMain = 0;
-  for (const n of line6) if (winMain.has(n)) matchMain++;
-  const matchSpecial = line6.includes(sp);
-  const tier = prizeTier(matchMain, matchSpecial);
-  return { matchMain, matchSpecial, tier };
+  // total lines
+  const lines = nCr(n, 6);
+
+  const wins = {
+    "1st": 0,
+    "2nd": 0,
+    "3rd": 0,
+    "4th": 0,
+    "5th": 0,
+    "6th": 0,
+    "7th": 0,
+  };
+
+  // Using combinatorics (fast even for 49 numbers)
+  // 1st: 6 main
+  wins["1st"] = nCr(a, 6);
+
+  // 2nd: 5 main + special
+  wins["2nd"] = b ? nCr(a, 5) * 1 : 0;
+
+  // 3rd: 5 main + 1 other (not special)
+  wins["3rd"] = nCr(a, 5) * nCr(nonWinNonSpecial, 1);
+
+  // 4th: 4 main + special + 1 other
+  wins["4th"] = b ? nCr(a, 4) * nCr(nonWinNonSpecial, 1) : 0;
+
+  // 5th: 4 main + 2 other
+  wins["5th"] = nCr(a, 4) * nCr(nonWinNonSpecial, 2);
+
+  // 6th: 3 main + special + 2 other
+  wins["6th"] = b ? nCr(a, 3) * nCr(nonWinNonSpecial, 2) : 0;
+
+  // 7th: 3 main + 3 other
+  wins["7th"] = nCr(a, 3) * nCr(nonWinNonSpecial, 3);
+
+  const hasWin = Object.values(wins).some((x) => x > 0);
+
+  return { lines, wins, hasWin, a, b };
 }
 
-function expandBetToLines(bet) {
-  // bet:
-  // {type:"single",numbers:[6]}
-  // {type:"multiple",numbers:[7..]}
-  // {type:"banker",bankers:[...],others:[...]}
-  if (bet.type === "single") return [bet.numbers];
+function countHitsBanker(bankers, others, winMainArr, specialNo) {
+  // bankers always included; choose (6-B) from others
+  const B = bankers.length;
+  const need = 6 - B;
+  const O = others.length;
+  const winSet = new Set(winMainArr);
 
-  if (bet.type === "multiple") return combos(bet.numbers, 6);
-
-  if (bet.type === "banker") {
-    const b = bet.bankers || [];
-    const o = bet.others || [];
-    const need = 6 - b.length;
-    if (need <= 0) return [];
-    return combos(o, need).map((c) => b.concat(c));
+  if (need < 0 || need > O) {
+    return {
+      lines: 0,
+      wins: { "1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0 },
+      hasWin: false,
+    };
   }
-  return [];
+
+  const aB = bankers.reduce((acc, n) => acc + (winSet.has(n) ? 1 : 0), 0);
+  const bB = bankers.includes(specialNo) ? 1 : 0;
+
+  const aO = others.reduce((acc, n) => acc + (winSet.has(n) ? 1 : 0), 0);
+  const bO = others.includes(specialNo) ? 1 : 0;
+
+  const nonWinOther = O - aO - bO;
+
+  const wins = { "1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0 };
+  const lines = nCr(O, need);
+
+  for (let x = 0; x <= Math.min(aO, need); x++) {
+    // y: choose special from others? only if special not already in bankers
+    const yMax = bB ? 0 : Math.min(bO, need - x);
+    for (let y = 0; y <= yMax; y++) {
+      const r = need - x - y; // remaining slots from non-winning (not special)
+      if (r < 0 || r > nonWinOther) continue;
+
+      const matchMain = aB + x;
+      const matchSpecial = Boolean(bB || y === 1);
+      const tier = tierName(matchMain, matchSpecial);
+      if (!tier) continue;
+
+      const ways =
+        nCr(aO, x) * nCr(bO, y) * nCr(nonWinOther, r);
+
+      wins[tier] += ways;
+    }
+  }
+
+  const hasWin = Object.values(wins).some((x) => x > 0);
+  return { lines, wins, hasWin };
 }
 
-/** Try to parse payload from GET query OR POST JSON */
+/** Parse payload from GET query OR POST JSON; try many param names for compatibility */
 async function parsePayload(request) {
   const url = new URL(request.url);
 
-  // 1) GET payload=json (urlencoded JSON)
-  const payload = url.searchParams.get("payload");
-  if (payload) {
-    return JSON.parse(payload);
-  }
+  // JSON packed
+  const payload = url.searchParams.get("payload") || url.searchParams.get("data");
+  if (payload) return JSON.parse(payload);
 
-  // 2) GET payloadB64=base64(JSON)
   const payloadB64 = url.searchParams.get("payloadB64");
-  if (payloadB64) {
-    const json = atob(payloadB64);
-    return JSON.parse(json);
-  }
+  if (payloadB64) return JSON.parse(atob(payloadB64));
 
-  // 3) "classic" GET params fallback (best-effort)
-  // type=single|multiple|banker
-  // numbers=1,2,3,4,5,6
-  // bankers=...&others=...
-  // half=1
-  const type = (url.searchParams.get("type") || "single").toLowerCase();
-  const half = url.searchParams.get("half") === "1";
+  // Try common param names
+  const typeRaw =
+    url.searchParams.get("type") ||
+    url.searchParams.get("betType") ||
+    url.searchParams.get("mode") ||
+    "single";
+  const type = String(typeRaw).toLowerCase();
 
+  const half =
+    url.searchParams.get("half") === "1" ||
+    url.searchParams.get("halfBet") === "1";
+
+  // numbers could be "numbers", "nums", "picks", "selected"
+  const numbers =
+    parseNumsStr(url.searchParams.get("numbers")) ||
+    [];
+  const numbers2 = parseNumsStr(url.searchParams.get("nums"));
+  const numbers3 = parseNumsStr(url.searchParams.get("picks"));
+  const numbers4 = parseNumsStr(url.searchParams.get("selected"));
+  const mainNumbers = uniq(
+    (numbers.length ? numbers : [])
+      .concat(numbers2 || [])
+      .concat(numbers3 || [])
+      .concat(numbers4 || [])
+  );
+
+  const bankers = uniq(
+    parseNumsStr(url.searchParams.get("bankers")) ||
+      parseNumsStr(url.searchParams.get("banker")) ||
+      parseNumsStr(url.searchParams.get("dan")) ||
+      []
+  );
+
+  const others = uniq(
+    parseNumsStr(url.searchParams.get("others")) ||
+      parseNumsStr(url.searchParams.get("drag")) ||
+      parseNumsStr(url.searchParams.get("tuo")) ||
+      []
+  );
+
+  // Scope
   const scopeType =
     (url.searchParams.get("scopeType") ||
       url.searchParams.get("scope") ||
@@ -126,25 +218,17 @@ async function parsePayload(request) {
         }
       : { type: "days", days: Number(url.searchParams.get("days") || 60) };
 
+  // Build bets
   let bets = [];
-  if (type === "banker") {
-    bets = [
-      {
-        type: "banker",
-        bankers: parseNumsStr(url.searchParams.get("bankers")),
-        others: parseNumsStr(url.searchParams.get("others") || url.searchParams.get("drag")),
-      },
-    ];
+  if (type.includes("bank") || type.includes("dan") || type.includes("膽")) {
+    bets = [{ type: "banker", bankers, others }];
+  } else if (type.includes("multi") || type.includes("複")) {
+    bets = [{ type: "multiple", numbers: mainNumbers }];
   } else {
-    bets = [
-      {
-        type: type === "multiple" ? "multiple" : "single",
-        numbers: parseNumsStr(url.searchParams.get("numbers")),
-      },
-    ];
+    bets = [{ type: "single", numbers: mainNumbers }];
   }
 
-  // 4) POST JSON body (if any)
+  // POST JSON overrides
   if (request.method === "POST") {
     const ct = request.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
@@ -157,15 +241,13 @@ async function parsePayload(request) {
 }
 
 async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
-  const keyObject = scope;
-
   return edgeCacheJsonData({
     ctx,
     cacheKeyNamespace: "check_draws_list",
     version: latestDrawNo || "v0",
     ttl: 30,
     swr: 300,
-    keyObject,
+    keyObject: scope,
     computeJson: async () => {
       let rows = [];
 
@@ -192,7 +274,6 @@ async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
           .all();
         rows = res.results || [];
       } else {
-        // days (use composite index friendly ORDER BY)
         const days = Number(scope?.days || 60);
         const start = new Date(Date.now() - days * 86400000);
         const startStr = start.toISOString().slice(0, 10);
@@ -210,11 +291,11 @@ async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
       }
 
       return {
-        draws: rows.map((r) => ({
+        draws: (rows || []).map((r) => ({
           drawNo: r.drawNo,
           drawDate: r.drawDate,
-          numbersArr: parseNumsStr(r.numbers),
-          specialNo: Number(r.special),
+          numbers: parseNumsStr(r.numbers), // ✅ array
+          special: Number(r.special),       // ✅ number
         })),
       };
     },
@@ -240,30 +321,70 @@ async function computeCheckResult({ request, env, ctx }) {
   });
 
   const draws = pack.draws || [];
+  const unitStake = half ? 0.5 : 1;
 
-  const results = draws.map((draw) => {
+  const results = draws.map((d) => {
+    const winMainArr = d.numbers;
+    const specialNo = d.special;
+
+    // each bet result
     const betResults = bets.map((bet) => {
-      const lines = expandBetToLines(bet);
-      const breakdown = { "1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0 };
-
-      for (const line of lines) {
-        const r = checkOneLine(line, draw);
-        if (r.tier) breakdown[r.tier] += 1;
+      if (bet.type === "banker") {
+        const bankers = uniq(bet.bankers || []);
+        const others = uniq((bet.others || []).filter((n) => !bankers.includes(n)));
+        const { lines, wins, hasWin } = countHitsBanker(bankers, others, winMainArr, specialNo);
+        return {
+          type: "banker",
+          lines,
+          stake: lines * unitStake,
+          wins,
+          hasWin,
+          bankers,
+          others,
+        };
       }
 
-      const unitStake = half ? 0.5 : 1;
+      if (bet.type === "multiple") {
+        const selected = uniq(bet.numbers || []);
+        const { lines, wins, hasWin } = countHitsMultiple(selected, winMainArr, specialNo);
+        return {
+          type: "multiple",
+          lines,
+          stake: lines * unitStake,
+          wins,
+          hasWin,
+          numbers: selected,
+        };
+      }
+
+      // single (treat as one line; still use formula for correctness)
+      const selected = uniq(bet.numbers || []);
+      const { lines, wins, hasWin } = countHitsMultiple(selected, winMainArr, specialNo);
+      // For single, lines should be 1 only when exactly 6 numbers; otherwise keep computed but most UIs assume 1
+      const singleLines = selected.length === 6 ? 1 : lines;
       return {
-        type: bet.type,
-        lines: lines.length,
-        stake: lines.length * unitStake,
-        breakdown,
+        type: "single",
+        lines: singleLines,
+        stake: singleLines * unitStake,
+        wins,
+        hasWin,
+        numbers: selected,
       };
     });
 
+    const hasWin = betResults.some((b) => b.hasWin);
+
+    // ✅ Backward-compatible per-draw shape:
     return {
-      drawNo: draw.drawNo,
-      drawDate: draw.drawDate,
-      winning: { numbers: draw.numbersArr, special: draw.specialNo },
+      drawNo: d.drawNo,
+      drawDate: d.drawDate,
+
+      // old UI expects:
+      numbers: winMainArr,
+      special: specialNo,
+
+      // new keys:
+      hasWin,
       betResults,
     };
   });
@@ -277,25 +398,21 @@ async function computeCheckResult({ request, env, ctx }) {
       drawCount: draws.length,
       half,
     },
+
+    // many frontends expect results / draws
     results,
+    draws: results, // alias for compatibility
   };
 }
 
-/**
- * IMPORTANT:
- * - Keep GET working (your existing /checker likely uses GET + cache)
- * - POST also works, but we do NOT cache POST by default
- */
 export async function onRequest(context) {
   const { request, env } = context;
   const ctx = context;
 
   try {
     if (request.method === "GET") {
-      // Cache GET responses by querystring + latestDrawNo version
       const db = getDb(env);
       if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
-
       const latest = await getLatestDrawMeta(db);
 
       return edgeCacheJsonResponse({
