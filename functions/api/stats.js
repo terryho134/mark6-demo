@@ -22,7 +22,8 @@ function parseNums(str) {
   return String(str)
     .split(/[^0-9]+/)
     .filter(Boolean)
-    .map((x) => Number(x));
+    .map((x) => Number(x))
+    .filter((n) => n >= 1 && n <= 49);
 }
 
 export async function onRequestGet(context) {
@@ -33,13 +34,13 @@ export async function onRequestGet(context) {
     const db = getDb(env);
     if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
 
-    const meta = await getLatestDrawMeta(db);
+    const metaLatest = await getLatestDrawMeta(db);
 
     return edgeCacheJsonResponse({
       request,
       ctx,
       cacheKeyNamespace: "api_stats",
-      version: meta.latestDrawNo || "v0",
+      version: metaLatest.latestDrawNo || "v0",
       ttl: 300,
       swr: 3600,
       cacheControlMaxAge: 0,
@@ -62,7 +63,6 @@ export async function onRequestGet(context) {
           windows.map((w) => [w, Array(50).fill(0)])
         );
 
-        // gap based on "numbers" only
         const lastSeenIdx = Array(50).fill(null);
 
         draws.forEach((d, idx) => {
@@ -73,7 +73,6 @@ export async function onRequestGet(context) {
             if (lastSeenIdx[n] === null) lastSeenIdx[n] = idx;
           }
 
-          // total counts includes numbers + special
           for (const n of nums) totalCount[n] += 1;
           if (sp >= 1 && sp <= 49) totalCount[sp] += 1;
 
@@ -100,23 +99,28 @@ export async function onRequestGet(context) {
           });
         }
 
-        // ✅ Provide multiple compatible keys for "total"
-        return {
+        // ✅ provide multiple keys so old UI always finds it
+        const payload = {
           ok: true,
-
-          // many frontends use top-level totalDraws
           totalDraws,
-
-          // some use meta.totalDraws / meta.total
           meta: {
-            latestDrawNo: meta.latestDrawNo,
-            latestUpdatedAt: meta.latestUpdatedAt,
+            latestDrawNo: metaLatest.latestDrawNo,
+            latestUpdatedAt: metaLatest.latestUpdatedAt,
             totalDraws,
             total: totalDraws,
           },
 
+          // primary
           rows,
+
+          // aliases (for old pages)
+          stats: rows,
+          items: rows,
+          data: rows,
+          list: rows,
         };
+
+        return payload;
       },
     });
   } catch (err) {
