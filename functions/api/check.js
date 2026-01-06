@@ -1,18 +1,35 @@
 // functions/api/check.js
-import { edgeCacheJsonData, getLatestDrawMeta } from "../_lib/edgeCache.js";
+import {
+  edgeCacheJsonResponse,
+  edgeCacheJsonData,
+  getLatestDrawMeta,
+  getDb,
+} from "../_lib/edgeCache.js";
 
-function parseNums(str) {
-  if (!str) return [];
-  return String(str)
+function jsonError(err, status = 500) {
+  const msg =
+    err instanceof Error ? `${err.message}\n${err.stack || ""}` : String(err);
+  return new Response(JSON.stringify({ ok: false, error: msg }), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function parseNumsStr(s) {
+  if (!s) return [];
+  return String(s)
     .split(/[^0-9]+/)
     .filter(Boolean)
     .map((x) => Number(x));
 }
 
 function combos(arr, k) {
-  // simple combination generator (n is small in Mark6)
   const res = [];
   const n = arr.length;
+  if (k < 0 || k > n) return res;
   const idx = Array.from({ length: k }, (_, i) => i);
 
   while (true) {
@@ -27,7 +44,6 @@ function combos(arr, k) {
 }
 
 function prizeTier(matchMain, matchSpecial) {
-  // Mark Six basic tiers
   if (matchMain === 6) return "1st";
   if (matchMain === 5 && matchSpecial) return "2nd";
   if (matchMain === 5) return "3rd";
@@ -50,29 +66,97 @@ function checkOneLine(line6, draw) {
 }
 
 function expandBetToLines(bet) {
-  // bet.type: "single" | "multiple" | "banker"
-  if (bet.type === "single") {
-    return [bet.numbers];
-  }
-  if (bet.type === "multiple") {
-    return combos(bet.numbers, 6);
-  }
+  // bet:
+  // {type:"single",numbers:[6]}
+  // {type:"multiple",numbers:[7..]}
+  // {type:"banker",bankers:[...],others:[...]}
+  if (bet.type === "single") return [bet.numbers];
+
+  if (bet.type === "multiple") return combos(bet.numbers, 6);
+
   if (bet.type === "banker") {
     const b = bet.bankers || [];
     const o = bet.others || [];
     const need = 6 - b.length;
-    if (need <= 0) return []; // invalid
+    if (need <= 0) return [];
     return combos(o, need).map((c) => b.concat(c));
   }
   return [];
 }
 
-async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
-  // scope:
-  // { type:"days", days:60 }
-  // { type:"issues", issues:30 }
-  // { type:"from", from:"2025001", count:20, dir:"asc|desc" }
+/** Try to parse payload from GET query OR POST JSON */
+async function parsePayload(request) {
+  const url = new URL(request.url);
 
+  // 1) GET payload=json (urlencoded JSON)
+  const payload = url.searchParams.get("payload");
+  if (payload) {
+    return JSON.parse(payload);
+  }
+
+  // 2) GET payloadB64=base64(JSON)
+  const payloadB64 = url.searchParams.get("payloadB64");
+  if (payloadB64) {
+    const json = atob(payloadB64);
+    return JSON.parse(json);
+  }
+
+  // 3) "classic" GET params fallback (best-effort)
+  // type=single|multiple|banker
+  // numbers=1,2,3,4,5,6
+  // bankers=...&others=...
+  // half=1
+  const type = (url.searchParams.get("type") || "single").toLowerCase();
+  const half = url.searchParams.get("half") === "1";
+
+  const scopeType =
+    (url.searchParams.get("scopeType") ||
+      url.searchParams.get("scope") ||
+      "days").toLowerCase();
+
+  const scope =
+    scopeType === "issues"
+      ? { type: "issues", issues: Number(url.searchParams.get("issues") || 30) }
+      : scopeType === "from"
+      ? {
+          type: "from",
+          from: url.searchParams.get("from"),
+          count: Number(url.searchParams.get("count") || 10),
+          dir: url.searchParams.get("dir") || "asc",
+        }
+      : { type: "days", days: Number(url.searchParams.get("days") || 60) };
+
+  let bets = [];
+  if (type === "banker") {
+    bets = [
+      {
+        type: "banker",
+        bankers: parseNumsStr(url.searchParams.get("bankers")),
+        others: parseNumsStr(url.searchParams.get("others") || url.searchParams.get("drag")),
+      },
+    ];
+  } else {
+    bets = [
+      {
+        type: type === "multiple" ? "multiple" : "single",
+        numbers: parseNumsStr(url.searchParams.get("numbers")),
+      },
+    ];
+  }
+
+  // 4) POST JSON body (if any)
+  if (request.method === "POST") {
+    const ct = request.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const b = await request.json().catch(() => null);
+      if (b) return b;
+    }
+  }
+
+  return { bets, half, scope };
+}
+
+async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
   const keyObject = scope;
 
   return edgeCacheJsonData({
@@ -108,7 +192,7 @@ async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
           .all();
         rows = res.results || [];
       } else {
-        // default: days
+        // days (use composite index friendly ORDER BY)
         const days = Number(scope?.days || 60);
         const start = new Date(Date.now() - days * 86400000);
         const startStr = start.toISOString().slice(0, 10);
@@ -126,11 +210,10 @@ async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
       }
 
       return {
-        returned: rows.length,
         draws: rows.map((r) => ({
           drawNo: r.drawNo,
           drawDate: r.drawDate,
-          numbersArr: parseNums(r.numbers),
+          numbersArr: parseNumsStr(r.numbers),
           specialNo: Number(r.special),
         })),
       };
@@ -138,23 +221,17 @@ async function loadDrawsForScope({ db, ctx, latestDrawNo, scope }) {
   });
 }
 
-export async function onRequestPost({ request, env, ctx }) {
-  const db = env.DB;
+async function computeCheckResult({ request, env, ctx }) {
+  const db = getDb(env);
+  if (!db) throw new Error("D1 binding not found. Please check env binding name.");
+
   const latest = await getLatestDrawMeta(db);
+  const payload = await parsePayload(request);
 
-  const body = await request.json().catch(() => ({}));
+  const bets = Array.isArray(payload.bets) ? payload.bets : [];
+  const half = Boolean(payload.half);
+  const scope = payload.scope || { type: "days", days: 60 };
 
-  // Expected body shape:
-  // {
-  //   "bets":[{type:"single",numbers:[...]}, {type:"multiple",numbers:[...]}, {type:"banker",bankers:[...],others:[...]}],
-  //   "half": false,
-  //   "scope": {type:"days",days:60} | {type:"issues",issues:30} | {type:"from",from:"2025001",count:20,dir:"asc"}
-  // }
-  const bets = Array.isArray(body.bets) ? body.bets : [];
-  const half = Boolean(body.half);
-  const scope = body.scope || { type: "days", days: 60 };
-
-  // Load draws with cache
   const pack = await loadDrawsForScope({
     db,
     ctx,
@@ -168,14 +245,10 @@ export async function onRequestPost({ request, env, ctx }) {
     const betResults = bets.map((bet) => {
       const lines = expandBetToLines(bet);
       const breakdown = { "1st": 0, "2nd": 0, "3rd": 0, "4th": 0, "5th": 0, "6th": 0, "7th": 0 };
-      let hitLines = 0;
 
       for (const line of lines) {
         const r = checkOneLine(line, draw);
-        if (r.tier) {
-          breakdown[r.tier] += 1;
-          hitLines += 1;
-        }
+        if (r.tier) breakdown[r.tier] += 1;
       }
 
       const unitStake = half ? 0.5 : 1;
@@ -183,7 +256,6 @@ export async function onRequestPost({ request, env, ctx }) {
         type: bet.type,
         lines: lines.length,
         stake: lines.length * unitStake,
-        hitLines,
         breakdown,
       };
     });
@@ -196,24 +268,64 @@ export async function onRequestPost({ request, env, ctx }) {
     };
   });
 
-  // IMPORTANT: do not cache check results
-  return new Response(
-    JSON.stringify({
-      meta: {
-        latestDrawNo: latest.latestDrawNo,
-        latestUpdatedAt: latest.latestUpdatedAt,
-        scope,
-        drawCount: draws.length,
-        half,
-      },
-      results,
-    }),
-    {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
+  return {
+    ok: true,
+    meta: {
+      latestDrawNo: latest.latestDrawNo,
+      latestUpdatedAt: latest.latestUpdatedAt,
+      scope,
+      drawCount: draws.length,
+      half,
+    },
+    results,
+  };
+}
+
+/**
+ * IMPORTANT:
+ * - Keep GET working (your existing /checker likely uses GET + cache)
+ * - POST also works, but we do NOT cache POST by default
+ */
+export async function onRequest({ request, env, ctx }) {
+  try {
+    if (request.method === "GET") {
+      // Cache GET responses by querystring + latestDrawNo version
+      const db = getDb(env);
+      if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
+
+      const latest = await getLatestDrawMeta(db);
+
+      return edgeCacheJsonResponse({
+        request,
+        ctx,
+        cacheKeyNamespace: "api_check",
+        version: latest.latestDrawNo || "v0",
+        ttl: 10,
+        swr: 60,
+        cacheControlMaxAge: 0,
+        cacheControlSMaxAge: 10,
+        computeJson: async () => {
+          return await computeCheckResult({ request, env, ctx });
+        },
+      });
     }
-  );
+
+    if (request.method === "POST") {
+      const data = await computeCheckResult({ request, env, ctx });
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
+      status: 405,
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+    });
+  } catch (err) {
+    return jsonError(err, 500);
+  }
 }
