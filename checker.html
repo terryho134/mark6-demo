@@ -210,19 +210,71 @@
       parseNumsAny(w.numbersArr).length ? parseNumsAny(w.numbersArr) :
       parseNumsAny(w.numbers).length ? parseNumsAny(w.numbers) :
       parseNumsAny(w.numbersStr);
-
-    const extra =
-      Number.isFinite(Number(w.extra)) ? Number(w.extra) :
-      Number.isFinite(Number(w.special)) ? Number(w.special) :
-      Number.isFinite(Number(w.specialNo)) ? Number(w.specialNo) :
-      0;
-
+  
+    const extra = getExtraNo(w);
+  
+    // summary might be missing; derive from units if needed
+    const summary =
+      Array.isArray(w.summary) ? w.summary :
+      deriveSummaryFromUnits(w.units);
+  
+    const fixedTotal =
+      Number(w.fixedTotal ?? w.fixedAmount?.totalFixed ?? w.fixedAmount?.total ?? w.fixed) || 0;
+  
     return {
       ...w,
       numbers: nums,
       extra,
-      fixedTotal: toNum(w.fixedTotal ?? w.fixedAmount?.totalFixed ?? w.fixedAmount?.total ?? w.fixed, 0),
+      summary,
+      fixedTotal,
     };
+  }
+
+  function getExtraNo(obj) {
+    return (
+      (Number.isFinite(Number(obj?.extra)) ? Number(obj.extra) : null) ??
+      (Number.isFinite(Number(obj?.special)) ? Number(obj.special) : null) ??
+      (Number.isFinite(Number(obj?.specialNo)) ? Number(obj.specialNo) : null) ??
+      0
+    );
+  }
+  
+  function deriveSummaryFromUnits(units) {
+    // units could be {div1..div7} or {1..7} or similar
+    const u = units || {};
+    const get = (k) => {
+      if (u == null) return 0;
+      if (Number.isFinite(Number(u[k]))) return Number(u[k]);
+      return 0;
+    };
+  
+    const mapping = [
+      ["div1", "頭獎"],
+      ["div2", "二獎"],
+      ["div3", "三獎"],
+      ["div4", "四獎"],
+      ["div5", "五獎"],
+      ["div6", "六獎"],
+      ["div7", "七獎"],
+    ];
+  
+    const out = [];
+    for (const [k, name] of mapping) {
+      const n = get(k);
+      if (n > 0) out.push({ name, units: n });
+    }
+    return out;
+  }
+  
+  function isAnyWinFromResult(r) {
+    if (!r) return false;
+    if (r.anyWin === true || r.hasWin === true || r.won === true) return true;
+  
+    const summary = Array.isArray(r.summary) ? r.summary : [];
+    if (summary.length > 0) return true;
+  
+    const derived = deriveSummaryFromUnits(r.units);
+    return derived.length > 0;
   }
 
   // -------------------------
@@ -630,16 +682,24 @@
         multiCount: toNum(multiCountEl.value, 10) || 10,
       };
     }
-
+  
     const drawNo = (drawNoEl.value || "").trim();
     const drawDate = (drawDateEl.value || "").trim();
-
+  
     if (drawNo) return { drawNo };
     if (drawDate) return { drawDate };
-
-    // Range preset
-    return { rangePreset: rangeEl ? rangeEl.value : "60days" };
+  
+    const rp = rangeEl ? rangeEl.value : "60days";
+  
+    // legacy-compatible expansion
+    const legacy = {};
+    if (rp === "60days") legacy.days = 60;
+    if (rp === "30issues") legacy.issues = 30;
+    if (rp === "60issues") legacy.issues = 60;
+  
+    return { rangePreset: rp, ...legacy };
   }
+
 
   function buildTicket(){
     const half = (type==="single") ? false : !!halfEl.checked;
@@ -659,26 +719,49 @@
   }
 
   function buildApiPayload(){
-    // Preferred modern shape: { bets:[...], half, scope }
-    // We'll send both new AND legacy keys for compatibility.
     const ticket = buildTicket();
     const scope = buildScope();
-
+  
+    const picksArr = Array.isArray(ticket.picks) ? ticket.picks : [];
+    const bankersArr = Array.isArray(ticket.bankers) ? ticket.bankers : [];
+    const legsArr = Array.isArray(ticket.legs) ? ticket.legs : [];
+  
     const bets =
       ticket.type === "banker"
-        ? [{ type: "banker", bankers: ticket.bankers, others: ticket.legs }]
+        ? [{ type: "banker", bankers: bankersArr, others: legsArr }]
         : ticket.type === "multiple"
-        ? [{ type: "multiple", numbers: ticket.picks }]
-        : [{ type: "single", numbers: ticket.picks }];
-
+        ? [{ type: "multiple", numbers: picksArr }]
+        : [{ type: "single", numbers: picksArr }];
+  
     return {
-      // new shape
+      // Newer shape
       bets,
-      half: ticket.half,
+      half: !!ticket.half,
       scope,
-
-      // legacy shape (keep, in case your API still reads these)
-      ...ticket,
+  
+      // Legacy flat keys (what many older check.js expect)
+      type: ticket.type,
+      halfBet: !!ticket.half,       // extra alias
+      picks: picksArr,
+      numbers: picksArr,            // extra alias
+      nums: picksArr,               // extra alias
+      bankers: bankersArr,
+      legs: legsArr,
+      others: legsArr,              // banker alias
+  
+      // Legacy nested object (some versions expect ticket: {...})
+      ticket: {
+        type: ticket.type,
+        half: !!ticket.half,
+        picks: picksArr,
+        numbers: picksArr,
+        nums: picksArr,
+        bankers: bankersArr,
+        legs: legsArr,
+        others: legsArr,
+      },
+  
+      // Query/scope keys (legacy + new)
       ...scope,
     };
   }
@@ -691,77 +774,67 @@
   }
 
   function renderMain(main){
-    const dRaw = main.draw || {};
-    const d = {
-      drawNo: dRaw.drawNo,
-      drawDate: dRaw.drawDate,
-      numbers: parseNumsAny(dRaw.numbers).length ? parseNumsAny(dRaw.numbers) : (dRaw.numbers || []),
-      extra: Number.isFinite(Number(dRaw.extra)) ? Number(dRaw.extra) : Number(dRaw.special || 0),
-    };
-
-    const t = main.ticket || {};
-    const r = main.result || {};
+    const dRaw = main?.draw || {};
+    const dNumbers = parseNumsAny(dRaw.numbers).length ? parseNumsAny(dRaw.numbers) : (dRaw.numbers || []);
+    const dExtra = getExtraNo(dRaw);
+  
+    const t = main?.ticket || {};
+    const r = main?.result || {};
+  
     const hit = r.bestHit;
-
-    const hitText = hit
-      ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
-      : "";
-
-    const fixed = r.fixedAmount || {};
+    const hitText = hit ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}` : "";
+  
+    // summary fallback
+    const summary = Array.isArray(r.summary) ? r.summary : deriveSummaryFromUnits(r.units);
+  
     const lines = [];
-
-    lines.push(`<div><strong>攪珠：</strong>${d.drawNo}（${fmtYMD(d.drawDate)}）</div>`);
-    lines.push(`<div class="muted">正選：${(d.numbers || []).join(" ")}　特別號：${String(d.extra || 0).padStart(2,"0")}</div>`);
-
+    lines.push(`<div><strong>攪珠：</strong>${dRaw.drawNo}（${fmtYMD(dRaw.drawDate)}）</div>`);
+    lines.push(`<div class="muted">正選：${dNumbers.join(" ")}　特別號：${String(dExtra).padStart(2,"0")}</div>`);
+  
     const chances = toNum(t.chances, 0);
     const unitStake = toNum(t.unitStake, 10);
     const totalStake = toNum(t.totalStake, chances * unitStake);
-
+  
     lines.push(`<div style="margin-top:8px;"><strong>你的彩票：</strong>${t.type || type}｜份數 ${chances.toLocaleString("en-US")}｜每份 HK$${unitStake}｜投注額 HK$ ${totalStake.toLocaleString("en-US")}</div>`);
-
-    const summary = Array.isArray(r.summary) ? r.summary : [];
+  
     if(summary.length === 0){
       lines.push(`<div style="margin-top:10px;"><strong>結果：</strong>未中獎</div>`);
       if (hitText) lines.push(`<div class="muted" style="margin-top:6px;">${hitText}（未中獎）</div>`);
       return lines.join("");
     }
-
+  
     const summaryText = summary.map(x=>`${x.name} × ${toNum(x.units,0).toLocaleString("en-US")}`).join("，");
     lines.push(`<div style="margin-top:10px;"><strong>中獎：</strong>${summaryText}</div>`);
-
-    if (toNum(fixed.totalFixed, 0) > 0){
-      lines.push(`<div style="margin-top:6px;"><strong>固定獎金（四至七獎）：</strong>HK$ ${toNum(fixed.totalFixed,0).toLocaleString("en-US")}</div>`);
-    }
-
+  
     if(r.topPrizeNote){
       lines.push(`<div class="muted" style="margin-top:6px;">${r.topPrizeNote}</div>`);
     }
-
+  
     return lines.join("");
   }
 
   function renderRecent(wins, titleLabel="近60日"){
     const title = `${titleLabel}（只顯示有中獎）`;
-
-    if(!wins || wins.length===0){
+  
+    const normalized = (wins || []).map(normalizeWinItem);
+    const onlyWins = normalized.filter(w => (w.summary || []).length > 0);
+  
+    if(!onlyWins || onlyWins.length===0){
       return `<h4 style="margin:0 0 8px;">${title}</h4><div class="muted">未有中獎紀錄。</div>`;
     }
-
-    const items = wins.map(_w=>{
-      const w = normalizeWinItem(_w);
+  
+    const items = onlyWins.map(w=>{
       const s = (w.summary || []).map(x=>`${x.name}×${x.units}`).join("，");
       const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
       const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
-
+  
       const hit = w.bestHit;
-      const hitText = hit
-        ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
-        : "";
-
+      const hitText = hit ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}` : "";
+  
       const nums = (w.numbers && w.numbers.length)
         ? `正選：${w.numbers.join(" ")}　特別號：${String(w.extra).padStart(2,"0")}`
         : "";
-
+  
       return `
         <li style="margin:10px 0;">
           <div><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</div>
@@ -770,9 +843,10 @@
         </li>
       `;
     }).join("");
-
+  
     return `<h4 style="margin:0 0 8px;">${title}</h4><ol>${items}</ol>`;
   }
+
 
   // -------------------------
   // Run check
@@ -792,6 +866,9 @@
 
     const payload = buildApiPayload();
 
+    // DEBUG: 如果仍然冇中獎，先睇 server 究竟收到咩
+    console.log("[check] payload", payload);
+
     try{
       const { res, data } = await fetchJsonNoStore("/api/check", {
         method: "POST",
@@ -806,6 +883,8 @@
         mainResultEl.innerHTML = `<div class="error">核對失敗：${msg}</div>`;
         return;
       }
+
+      console.log("[check] response keys", Object.keys(data || {}), data);
 
       statusEl.textContent="";
       resultCard.style.display="block";
