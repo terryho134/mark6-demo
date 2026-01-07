@@ -823,6 +823,112 @@
     if (scope.issues) return `近${scope.issues}期`;
     return "最近範圍";
   }
+
+  function deriveSummaryFromUnitsFlexible(units) {
+  if (!units) return [];
+
+  // Case 1: array of prize objects
+  if (Array.isArray(units)) {
+    // e.g. [{div:4, units:2}] / [{division:4, count:2}]
+    return units
+      .map((p) => {
+        const div = toNum(p.div ?? p.division ?? p.tier ?? p.prize, 0);
+        const u = toNum(p.units ?? p.count ?? p.n ?? 0, 0);
+        if (div < 1 || div > 7 || u <= 0) return null;
+        const nameMap = {1:"頭獎",2:"二獎",3:"三獎",4:"四獎",5:"五獎",6:"六獎",7:"七獎"};
+        return { name: nameMap[div] || `第${div}獎`, units: u };
+      })
+      .filter(Boolean);
+  }
+
+  // Case 2: object map
+  if (typeof units === "object") {
+    const nameMap = {1:"頭獎",2:"二獎",3:"三獎",4:"四獎",5:"五獎",6:"六獎",7:"七獎"};
+    const out = [];
+
+    for (let div = 1; div <= 7; div++) {
+      const keys = [
+        `div${div}`,         // div4
+        String(div),         // "4"
+        `d${div}`,           // d4
+        `division${div}`,    // division4
+        `tier${div}`,        // tier4
+      ];
+
+      let val = 0;
+      for (const k of keys) {
+        if (Number.isFinite(Number(units[k]))) { val = Number(units[k]); break; }
+      }
+      if (val > 0) out.push({ name: nameMap[div], units: val });
+    }
+
+    return out;
+  }
+
+  return [];
+}
+
+function summaryFromResult(r) {
+  if (!r) return [];
+
+  if (Array.isArray(r.summary) && r.summary.length) return r.summary;
+
+  // some APIs return prizes/wins array
+  if (Array.isArray(r.prizes) && r.prizes.length) {
+    return r.prizes
+      .map(p => ({
+        name: p.name || (p.div ? `第${p.div}獎` : "獎項"),
+        units: toNum(p.units ?? p.count ?? 0, 0),
+      }))
+      .filter(x => x.units > 0);
+  }
+
+  if (Array.isArray(r.wins) && r.wins.length) {
+    return r.wins
+      .map(p => ({
+        name: p.name || (p.div ? `第${p.div}獎` : "獎項"),
+        units: toNum(p.units ?? p.count ?? 0, 0),
+      }))
+      .filter(x => x.units > 0);
+  }
+
+  // units-like objects (many variants)
+  const units =
+    r.units ||
+    r.prizeUnits ||
+    r.divUnits ||
+    r.divisionUnits ||
+    r.divisions ||
+    r.prize ||
+    null;
+
+  const derived = deriveSummaryFromUnitsFlexible(units);
+  if (derived.length) return derived;
+
+  return [];
+  }
+  
+  function isWinResult(r) {
+    if (!r) return false;
+  
+    // per-result boolean flags
+    if (r.anyWin === true || r.hasWin === true || r.won === true || r.isWin === true) return true;
+  
+    const s = summaryFromResult(r);
+    if (s.length) return true;
+  
+    // if units-like object has any positive number
+    const units =
+      r.units || r.prizeUnits || r.divUnits || r.divisionUnits || r.divisions || null;
+  
+    if (units && typeof units === "object") {
+      for (const k of Object.keys(units)) {
+        if (Number.isFinite(Number(units[k])) && Number(units[k]) > 0) return true;
+      }
+    }
+  
+    return false;
+  }
   
   function mergeDrawsResults(draws = [], results = []) {
     return draws.map((d, i) => {
@@ -835,48 +941,71 @@
   
       const extra = getExtraNo(d);
   
-      const summary =
-        Array.isArray(r.summary) ? r.summary :
-        deriveSummaryFromUnits(r.units);
+      const summary = summaryFromResult(r);
+      const isWin = isWinResult(r);
   
       const fixedTotal =
         Number(r.fixedTotal ?? r.fixedAmount?.totalFixed ?? r.fixedAmount?.total ?? r.fixed) || 0;
   
       return {
-        // draw fields
         drawNo: d.drawNo,
         drawDate: d.drawDate,
         numbers,
         extra,
   
-        // result fields (for renderRecent)
+        // result-derived fields
         summary,
-        units: r.units,
         bestHit: r.bestHit,
         fixedTotal,
         topPrizeNote: r.topPrizeNote,
+  
+        // IMPORTANT: don't rely on summary only
+        isWin,
+  
+        // keep raw result for debugging if needed
+        __result: r,
       };
     });
   }
 
-
   function renderRecent(wins, titleLabel="近60日"){
     const title = `${titleLabel}（只顯示有中獎）`;
   
-    const normalized = (wins || []).map(normalizeWinItem);
-    const onlyWins = normalized.filter(w => (w.summary || []).length > 0);
+    const list = (wins || []).map(w => {
+      // If it's already merged, keep it; otherwise normalize and try infer
+      const summary = Array.isArray(w.summary) ? w.summary : [];
+      const isWin = (w.isWin === true) || (summary.length > 0) || isWinResult(w.__result || w);
+      const extra = Number.isFinite(Number(w.extra)) ? Number(w.extra) : getExtraNo(w);
+      const numbers = Array.isArray(w.numbers) ? w.numbers : parseNumsAny(w.numbers);
   
-    if(!onlyWins || onlyWins.length===0){
+      return {
+        ...w,
+        summary: summary.length ? summary : summaryFromResult(w.__result || w),
+        isWin,
+        extra,
+        numbers,
+      };
+    });
+  
+    const onlyWins = list.filter(w => w.isWin);
+  
+    if(onlyWins.length === 0){
       return `<h4 style="margin:0 0 8px;">${title}</h4><div class="muted">未有中獎紀錄。</div>`;
     }
   
     const items = onlyWins.map(w=>{
-      const s = (w.summary || []).map(x=>`${x.name}×${x.units}`).join("，");
+      const sArr = (w.summary || []);
+      const s = sArr.length
+        ? sArr.map(x=>`${x.name}×${x.units}`).join("，")
+        : "中獎（獎項明細未提供）";
+  
       const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
       const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
   
       const hit = w.bestHit;
-      const hitText = hit ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}` : "";
+      const hitText = hit
+        ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
+        : "";
   
       const nums = (w.numbers && w.numbers.length)
         ? `正選：${w.numbers.join(" ")}　特別號：${String(w.extra).padStart(2,"0")}`
@@ -893,7 +1022,6 @@
   
     return `<h4 style="margin:0 0 8px;">${title}</h4><ol>${items}</ol>`;
   }
-
 
   // -------------------------
   // Run check
