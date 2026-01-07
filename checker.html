@@ -136,918 +136,953 @@
 
   <p><a href="/">返回首頁</a></p>
 
-  <script>
-    // -------------------------
-    // Helpers
-    // -------------------------
-    async function fetchJsonNoStore(url, fetchInit = {}) {
-      const u = new URL(url, location.origin);
-      u.searchParams.set("__ts", Date.now().toString()); // bust browser cache (edge key ignores __ts)
-  
-      const res = await fetch(u.toString(), {
-        cache: "no-store",
-        headers: {
-          "Cache-Control": "no-cache",
-          "accept": "application/json",
-          ...(fetchInit.headers || {})
-        },
-        ...fetchInit,
-      });
-  
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        throw new Error(`API 回傳非 JSON（HTTP ${res.status}）。前 200 字：` + text.slice(0, 200));
+<script>
+  // -------------------------
+  // Helpers
+  // -------------------------
+  async function fetchJsonNoStore(url, fetchInit = {}) {
+    const u = new URL(url, location.origin);
+    u.searchParams.set("__ts", Date.now().toString());
+
+    const res = await fetch(u.toString(), {
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache",
+        "accept": "application/json",
+        ...(fetchInit.headers || {})
+      },
+      ...fetchInit,
+    });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`API 回傳非 JSON（HTTP ${res.status}）。前 200 字：` + text.slice(0, 200));
+    }
+    return { res, data };
+  }
+
+  function toNum(x, fallback = 0) {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function parseNumsAny(x) {
+    if (Array.isArray(x)) return x.map((v) => toNum(v)).filter((n) => n >= 1 && n <= 49);
+    if (typeof x === "string") {
+      return x
+        .split(/[^0-9]+/)
+        .filter(Boolean)
+        .map((v) => toNum(v))
+        .filter((n) => n >= 1 && n <= 49);
+    }
+    return [];
+  }
+
+  function getExtraNo(obj) {
+    return (
+      (Number.isFinite(Number(obj?.extra)) ? Number(obj.extra) : null) ??
+      (Number.isFinite(Number(obj?.special)) ? Number(obj.special) : null) ??
+      (Number.isFinite(Number(obj?.specialNo)) ? Number(obj.specialNo) : null) ??
+      0
+    );
+  }
+
+  // Normalize drawNo like "26/2" -> "26/002"
+  function normalizeDrawNo(s) {
+    const str = String(s || "").trim();
+    const m = str.match(/^(\d{2})\/(\d{1,3})$/);
+    if (!m) return str;
+    return `${m[1]}/${String(Number(m[2])).padStart(3, "0")}`;
+  }
+
+  function comb(n, k) {
+    n = toNum(n, 0);
+    k = toNum(k, 0);
+    if (k < 0 || n < 0 || k > n) return 0;
+    k = Math.min(k, n - k);
+    let r = 1;
+    for (let i = 1; i <= k; i++) r = (r * (n - (k - i))) / i;
+    return Math.round(r);
+  }
+
+  // Prize mapping (Mark Six)
+  // div1: 6
+  // div2: 5 + special
+  // div3: 5
+  // div4: 4 + special
+  // div5: 4
+  // div6: 3 + special
+  // div7: 3
+  function divFromHit(mainHit, hasSpecial) {
+    if (mainHit === 6) return 1;
+    if (mainHit === 5 && hasSpecial) return 2;
+    if (mainHit === 5) return 3;
+    if (mainHit === 4 && hasSpecial) return 4;
+    if (mainHit === 4) return 5;
+    if (mainHit === 3 && hasSpecial) return 6;
+    if (mainHit === 3) return 7;
+    return 0;
+  }
+
+  function unitsToSummary(units) {
+    const nameMap = {1:"頭獎",2:"二獎",3:"三獎",4:"四獎",5:"五獎",6:"六獎",7:"七獎"};
+    const out = [];
+    for (let d = 1; d <= 7; d++) {
+      const v = toNum(units[`div${d}`], 0);
+      if (v > 0) out.push({ name: nameMap[d], units: v });
+    }
+    return out;
+  }
+
+  // Client-side compute units for ONE draw
+  // draw: {numbers:[6 mains], extra:special}
+  // ticket: {type, picks[] | bankers[]+legs[]}
+  function computeUnitsClient(ticket, draw) {
+    const W = new Set((draw.numbers || []).map(Number));
+    const S = Number(draw.extra || 0);
+
+    const units = {div1:0,div2:0,div3:0,div4:0,div5:0,div6:0,div7:0};
+
+    function add(div, count) {
+      if (div >= 1 && div <= 7 && count > 0) units[`div${div}`] += count;
+    }
+
+    // bestHit for display
+    let bestMain = 0;
+    let bestExtra = false;
+
+    if (ticket.type === "single") {
+      const picks = (ticket.picks || []).map(Number);
+      const mainHit = picks.filter(n => W.has(n)).length;
+      const hasSpecial = picks.includes(S);
+      bestMain = mainHit; bestExtra = hasSpecial;
+      add(divFromHit(mainHit, hasSpecial), 1);
+      return { units, summary: unitsToSummary(units), bestHit: { main: bestMain, extra: bestExtra } };
+    }
+
+    if (ticket.type === "multiple") {
+      const P = (ticket.picks || []).map(Number);
+      const k = P.length;
+
+      // a = how many winning mains inside pool
+      const a = P.filter(n => W.has(n)).length;
+      // s = whether special is inside pool
+      const s = P.includes(S) ? 1 : 0;
+      const other = k - a - s;
+
+      // Best possible hit (for display)
+      bestMain = Math.min(6, a);
+      bestExtra = (bestMain === 6) ? false : (s === 1 && bestMain >= 3);
+
+      // Counts (see formulas)
+      add(1, (a === 6) ? 1 : 0); // only 1 way if a==6 (bet = all 6 mains)
+
+      add(2, comb(a,5) * s * comb(other,0));
+      add(3, comb(a,5) * comb(other,1));
+
+      add(4, comb(a,4) * s * comb(other,1));
+      add(5, comb(a,4) * comb(other,2));
+
+      add(6, comb(a,3) * s * comb(other,2));
+      add(7, comb(a,3) * comb(other,3));
+
+      return { units, summary: unitsToSummary(units), bestHit: { main: bestMain, extra: bestExtra } };
+    }
+
+    // banker
+    // ticket.bankers fixed in all bets, choose t = 6-b from legs
+    const B = (ticket.bankers || []).map(Number);
+    const L = (ticket.legs || []).map(Number);
+    const b = B.length;
+    const t = 6 - b;
+
+    const wb = B.filter(n => W.has(n)).length;
+    const sb = B.includes(S) ? 1 : 0;
+
+    const wl = L.filter(n => W.has(n)).length;
+    const sl = L.includes(S) ? 1 : 0;
+
+    const o = L.length - wl - sl;
+
+    // Best possible hit
+    // maximize mainHit = wb + min(wl, t)
+    bestMain = Math.min(6, wb + Math.min(wl, Math.max(0, t)));
+    // extra possible if sb==1 or (sl==1 and we can choose it)
+    bestExtra = (sb === 1) || (sl === 1 && t >= 1);
+
+    // Count units by iterating x (#winning legs chosen) and y (choose special from legs or not)
+    for (let x = 0; x <= Math.min(wl, t); x++) {
+      for (let y = 0; y <= Math.min(sl, t - x); y++) {
+        const z = t - x - y;
+        if (z < 0 || z > o) continue;
+
+        const count = comb(wl, x) * comb(sl, y) * comb(o, z);
+        const mainHit = wb + x;
+        const hasSpecial = (sb === 1) || (y === 1);
+        const div = divFromHit(mainHit, hasSpecial);
+        add(div, count);
       }
-      return { res, data };
     }
-  
-    function toNum(x, fallback = 0) {
-      const n = Number(x);
-      return Number.isFinite(n) ? n : fallback;
-    }
-  
-    function parseNumsAny(x) {
-      if (Array.isArray(x)) return x.map((v) => toNum(v)).filter((n) => n >= 1 && n <= 49);
-      if (typeof x === "string") {
-        return x
-          .split(/[^0-9]+/)
-          .filter(Boolean)
-          .map((v) => toNum(v))
-          .filter((n) => n >= 1 && n <= 49);
+
+    return { units, summary: unitsToSummary(units), bestHit: { main: bestMain, extra: bestExtra } };
+  }
+
+  function summaryFromResult(r) {
+    if (!r) return [];
+    if (Array.isArray(r.summary) && r.summary.length) return r.summary;
+
+    // Try common containers
+    for (const key of ["prizes", "wins", "breakdown", "details"]) {
+      if (Array.isArray(r[key]) && r[key].length) {
+        // if already {name, units}
+        const s2 = r[key]
+          .map(p => ({ name: p.name || p.title || "", units: toNum(p.units ?? p.count ?? 0, 0) }))
+          .filter(x => x.units > 0 && x.name);
+        if (s2.length) return s2;
       }
-      return [];
     }
-  
-    function getExtraNo(obj) {
-      return (
-        (Number.isFinite(Number(obj?.extra)) ? Number(obj.extra) : null) ??
-        (Number.isFinite(Number(obj?.special)) ? Number(obj.special) : null) ??
-        (Number.isFinite(Number(obj?.specialNo)) ? Number(obj.specialNo) : null) ??
-        0
-      );
-    }
-  
-    function deriveSummaryFromUnitsFlexible(units) {
-      if (!units) return [];
+
+    // Try units-like objects
+    const units = r.units || r.prizeUnits || r.divUnits || r.divisionUnits || r.divisions || null;
+    if (units && typeof units === "object") {
       const nameMap = {1:"頭獎",2:"二獎",3:"三獎",4:"四獎",5:"五獎",6:"六獎",7:"七獎"};
-  
-      // array
-      if (Array.isArray(units)) {
-        return units
-          .map((p) => {
-            const div = toNum(p.div ?? p.division ?? p.tier ?? p.prize ?? p.level, 0);
-            const u = toNum(p.units ?? p.count ?? p.n ?? p.qty ?? p.value ?? 0, 0);
-            if (div < 1 || div > 7 || u <= 0) return null;
-            return { name: nameMap[div] || `第${div}獎`, units: u };
-          })
-          .filter(Boolean);
-      }
-  
-      // object map
-      if (typeof units === "object") {
-        const out = [];
-        for (let div = 1; div <= 7; div++) {
-          const keys = [
-            `div${div}`, String(div), `d${div}`,
-            `division${div}`, `tier${div}`, `prize${div}`, `level${div}`,
-          ];
-          let val = 0;
-          for (const k of keys) {
-            if (Number.isFinite(Number(units[k]))) { val = Number(units[k]); break; }
-          }
-          if (val > 0) out.push({ name: nameMap[div], units: val });
+      const out = [];
+      for (let d = 1; d <= 7; d++) {
+        const keys = [`div${d}`, String(d), `d${d}`, `tier${d}`, `division${d}`];
+        let v = 0;
+        for (const k of keys) {
+          if (Number.isFinite(Number(units[k]))) { v = Number(units[k]); break; }
         }
-        return out;
+        if (v > 0) out.push({ name: nameMap[d], units: v });
       }
-  
-      return [];
+      if (out.length) return out;
     }
-  
-    function summaryFromResult(r) {
-      if (!r) return [];
-  
-      if (Array.isArray(r.summary) && r.summary.length) return r.summary;
-  
-      for (const key of ["prizes", "wins", "breakdown", "details"]) {
-        if (Array.isArray(r[key]) && r[key].length) {
-          const s = deriveSummaryFromUnitsFlexible(r[key]);
-          if (s.length) return s;
-  
-          const s2 = r[key]
-            .map(p => ({ name: p.name || p.title || "", units: toNum(p.units ?? p.count ?? 0, 0) }))
-            .filter(x => x.units > 0 && x.name);
-          if (s2.length) return s2;
-        }
-      }
-  
-      const directCandidates = [
-        "units", "prizeUnits", "divUnits", "divisionUnits",
-        "divisions", "division", "prize", "prizeCount",
-        "winUnits", "winCount", "counts",
-      ];
-  
-      for (const k of directCandidates) {
-        const s = deriveSummaryFromUnitsFlexible(r[k]);
-        if (s.length) return s;
-      }
-  
-      // deep scan
-      const visited = new Set();
-      function scan(obj, depth = 0) {
-        if (!obj || typeof obj !== "object") return null;
-        if (visited.has(obj)) return null;
-        visited.add(obj);
-  
-        const sHere = deriveSummaryFromUnitsFlexible(obj);
-        if (sHere.length) return sHere;
-  
-        if (depth >= 5) return null;
-  
-        if (Array.isArray(obj)) {
-          for (const it of obj) {
-            const s = scan(it, depth + 1);
-            if (s && s.length) return s;
-          }
-          return null;
-        }
-  
-        for (const key of Object.keys(obj)) {
-          const val = obj[key];
-          if (!val || typeof val !== "object") continue;
-          const s = scan(val, depth + 1);
-          if (s && s.length) return s;
-        }
-        return null;
-      }
-  
-      const deep = scan(r, 0);
-      return (deep && deep.length) ? deep : [];
-    }
-  
-    function isWinResult(r) {
-      if (!r) return false;
-      if (r.anyWin === true || r.hasWin === true || r.won === true || r.isWin === true) return true;
-      const s = summaryFromResult(r);
-      if (s.length) return true;
-  
-      const units = r.units || r.prizeUnits || r.divUnits || r.divisionUnits || r.divisions || null;
-      if (units && typeof units === "object") {
-        for (const k of Object.keys(units)) {
-          if (Number.isFinite(Number(units[k])) && Number(units[k]) > 0) return true;
-        }
-      }
-      return false;
-    }
-  
-    function mergeDrawsResults(draws = [], results = []) {
-      return draws.map((d, i) => {
-        const r = results[i] || {};
-  
-        const numbers =
-          parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
-          parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
-          parseNumsAny(d.numbersStr);
-  
-        const extra = getExtraNo(d);
-        const summary = summaryFromResult(r);
-        const isWin = isWinResult(r);
-  
-        const fixedTotal =
-          Number(r.fixedTotal ?? r.fixedAmount?.totalFixed ?? r.fixedAmount?.total ?? r.fixed) || 0;
-  
-        return {
-          drawNo: d.drawNo,
-          drawDate: d.drawDate,
-          numbers,
-          extra,
-          summary,
-          bestHit: r.bestHit,
-          fixedTotal,
-          topPrizeNote: r.topPrizeNote,
-          isWin,
-          __result: r,
-        };
-      });
-    }
-  
-    // -------------------------
-    // DOM refs
-    // -------------------------
-    const rangeEl = document.getElementById("rangePreset");
-    const rangeWrapEl = document.getElementById("rangeWrap");
-  
-    const multiModeEl = document.getElementById("multiMode");
-    const multiControlsEl = document.getElementById("multiControls");
-    const multiYearEl = document.getElementById("multiYear");
-    const multiSeqEl = document.getElementById("multiSeq");
-    const multiCountEl = document.getElementById("multiCount");
-    const startDrawNoEl = document.getElementById("startDrawNo");
-  
-    const gridEl = document.getElementById("grid");
-    const inputEl = document.getElementById("input");
-    const inputErrEl = document.getElementById("inputErr");
-    const ruleHintEl = document.getElementById("ruleHint");
-    const chancesPill = document.getElementById("chancesPill");
-    const stakePill = document.getElementById("stakePill");
-    const halfEl = document.getElementById("half");
-    const halfResultEl = document.getElementById("halfResult");
-    const halfWrapEl = document.getElementById("halfWrap");
-    const halfResultWrapEl = document.getElementById("halfResultWrap");
-  
-    const drawDateEl = document.getElementById("drawDate");
-    const yearEl = document.getElementById("year");
-    const seqEl = document.getElementById("seq");
-    const drawNoEl = document.getElementById("drawNo");
-  
-    const statusEl = document.getElementById("status");
-    const resultCard = document.getElementById("resultCard");
-    const mainResultEl = document.getElementById("mainResult");
-    const recentBlockEl = document.getElementById("recentBlock");
-  
-    const typeEls = Array.from(document.querySelectorAll('input[name="type"]'));
-  
-    // -------------------------
-    // state
-    // -------------------------
-    let type = "single";
-    let picks = new Set();
-    let bankers = new Set();
-    let legs = new Set();
-  
-    // Keep last request scope for labeling / fallback
-    let __lastReqScope = null;
-  
-    function updateHalfVisibility(){
-      const show = (type !== "single");
-      if (!show) {
-        halfEl.checked = false;
-        if (halfResultEl) halfResultEl.checked = false;
-      }
-      if (halfWrapEl) halfWrapEl.style.display = show ? "inline-flex" : "none";
-      if (halfResultWrapEl) halfResultWrapEl.style.display = show ? "inline-flex" : "none";
-    }
-  
-    function updateRangeVisibility(){
-      const hasSingleTarget = !!(drawDateEl?.value) || !!(drawNoEl?.value);
-      const isMulti = (multiModeEl ? multiModeEl.checked : false);
-      const show = !hasSingleTarget && !isMulti;
-      if (rangeWrapEl) rangeWrapEl.style.display = show ? "inline-flex" : "none";
-    }
-  
-    function pad2(x){ return String(x).padStart(2,"0"); }
-    function pad3(x){ return String(x).padStart(3,"0"); }
-    function yyFromYear(y){ return pad2(Number(y)%100); }
-  
-    function buildDrawNoFromYearSeq(){
-      const y = yearEl.value;
-      const seq = parseInt(seqEl.value,10);
-      if(!y || !Number.isFinite(seq) || seq<=0) { drawNoEl.value=""; updateRangeVisibility(); return; }
-      drawNoEl.value = `${yyFromYear(y)}/${pad3(seq)}`;
-      updateRangeVisibility();
-    }
-  
-    // ✅ HARDENED: if drawNoEl is empty but year+seq exists, derive it
-    function getSingleTargetFromUI(){
-      const drawDate = (drawDateEl?.value || "").trim();
-      if (drawDate) return { drawDate };
-  
-      let drawNo = (drawNoEl?.value || "").trim();
-      if (!drawNo) {
-        const y = (yearEl?.value || "").trim();
-        const s = parseInt(seqEl?.value, 10);
-        if (y && Number.isFinite(s) && s > 0) {
-          drawNo = `${yyFromYear(y)}/${pad3(s)}`;
-          if (drawNoEl) drawNoEl.value = drawNo; // sync back
-        }
-      }
-      drawNo = (drawNo || "").trim();
-      if (drawNo) return { drawNo };
-  
-      return null;
-    }
-  
-    // years dropdown
-    (function initYears(){
-      const nowY = new Date().getFullYear();
-      for(let y=2002; y<=nowY; y++){
-        const opt=document.createElement("option");
-        opt.value=String(y);
-        opt.textContent=String(y);
-        yearEl.appendChild(opt);
-      }
-      yearEl.value=String(nowY);
-    })();
-  
-    (function initMulti(){
-      const nowY = new Date().getFullYear();
-      for(let y=2002; y<=nowY; y++){
-        const opt=document.createElement("option");
-        opt.value=String(y);
-        opt.textContent=String(y);
-        multiYearEl.appendChild(opt);
-      }
-      multiYearEl.value=String(nowY);
-  
-      for(let i=1;i<=200;i++){
-        const opt=document.createElement("option");
-        opt.value=String(i);
-        opt.textContent=String(i).padStart(3,"0");
-        multiSeqEl.appendChild(opt);
-      }
-      multiSeqEl.value="1";
-  
-      function buildStartDrawNo(){
-        const y = multiYearEl.value;
-        const s = parseInt(multiSeqEl.value,10);
-        if(!y || !Number.isFinite(s) || s<=0){ startDrawNoEl.value=""; return; }
-        startDrawNoEl.value = `${yyFromYear(y)}/${pad3(s)}`;
-      }
-  
-      multiYearEl.addEventListener("change", buildStartDrawNo);
-      multiSeqEl.addEventListener("change", buildStartDrawNo);
-      buildStartDrawNo();
-    })();
-  
-    function setMultiMode(on){
-      if (multiControlsEl) multiControlsEl.style.display = on ? "flex" : "none";
-  
-      drawDateEl.disabled = on;
-      yearEl.disabled = on;
-      seqEl.disabled = on;
-      document.getElementById("clearDraw").disabled = on;
-  
-      if (on) {
-        drawDateEl.value="";
-        seqEl.value="";
-        drawNoEl.value="";
-        updateRangeVisibility();
+
+    return [];
+  }
+
+  function isWinResult(r) {
+    if (!r) return false;
+    if (r.anyWin === true || r.hasWin === true || r.won === true || r.isWin === true) return true;
+    const s = summaryFromResult(r);
+    if (s.length) return true;
+    const units = r.units || r.prizeUnits || r.divUnits || r.divisionUnits || r.divisions || null;
+    if (units && typeof units === "object") {
+      for (const k of Object.keys(units)) {
+        if (Number.isFinite(Number(units[k])) && Number(units[k]) > 0) return true;
       }
     }
-  
-    if (multiModeEl) {
-      multiModeEl.addEventListener("change", ()=>{
-        setMultiMode(multiModeEl.checked);
-        updateRangeVisibility();
-      });
+    return false;
+  }
+
+  function mergeDrawsResults(draws = [], results = []) {
+    return draws.map((d, i) => {
+      const r = results[i] || {};
+
+      const numbers =
+        parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
+        parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
+        parseNumsAny(d.numbersStr);
+
+      const extra = getExtraNo(d);
+      const summary = summaryFromResult(r);
+      const isWin = isWinResult(r);
+
+      const fixedTotal =
+        Number(r.fixedTotal ?? r.fixedAmount?.totalFixed ?? r.fixedAmount?.total ?? r.fixed) || 0;
+
+      return {
+        drawNo: d.drawNo,
+        drawNoN: normalizeDrawNo(d.drawNo),
+        drawDate: d.drawDate,
+        numbers,
+        extra,
+        summary,
+        bestHit: r.bestHit,
+        fixedTotal,
+        topPrizeNote: r.topPrizeNote,
+        isWin,
+        __result: r,
+      };
+    });
+  }
+
+  // -------------------------
+  // DOM refs
+  // -------------------------
+  const rangeEl = document.getElementById("rangePreset");
+  const rangeWrapEl = document.getElementById("rangeWrap");
+
+  const multiModeEl = document.getElementById("multiMode");
+  const multiControlsEl = document.getElementById("multiControls");
+  const multiYearEl = document.getElementById("multiYear");
+  const multiSeqEl = document.getElementById("multiSeq");
+  const multiCountEl = document.getElementById("multiCount");
+  const startDrawNoEl = document.getElementById("startDrawNo");
+
+  const gridEl = document.getElementById("grid");
+  const inputEl = document.getElementById("input");
+  const inputErrEl = document.getElementById("inputErr");
+  const ruleHintEl = document.getElementById("ruleHint");
+  const chancesPill = document.getElementById("chancesPill");
+  const stakePill = document.getElementById("stakePill");
+  const halfEl = document.getElementById("half");
+  const halfResultEl = document.getElementById("halfResult");
+  const halfWrapEl = document.getElementById("halfWrap");
+  const halfResultWrapEl = document.getElementById("halfResultWrap");
+
+  const drawDateEl = document.getElementById("drawDate");
+  const yearEl = document.getElementById("year");
+  const seqEl = document.getElementById("seq");
+  const drawNoEl = document.getElementById("drawNo");
+
+  const statusEl = document.getElementById("status");
+  const resultCard = document.getElementById("resultCard");
+  const mainResultEl = document.getElementById("mainResult");
+  const recentBlockEl = document.getElementById("recentBlock");
+
+  const typeEls = Array.from(document.querySelectorAll('input[name="type"]'));
+
+  // -------------------------
+  // state
+  // -------------------------
+  let type = "single";
+  let picks = new Set();
+  let bankers = new Set();
+  let legs = new Set();
+  let __lastReqScope = null;
+
+  function updateHalfVisibility(){
+    const show = (type !== "single");
+    if (!show) {
+      halfEl.checked = false;
+      if (halfResultEl) halfResultEl.checked = false;
     }
-  
-    yearEl.addEventListener("change", buildDrawNoFromYearSeq);
-    seqEl.addEventListener("input", buildDrawNoFromYearSeq);
-    drawDateEl.addEventListener("change", updateRangeVisibility);
-  
-    document.getElementById("clearDraw").addEventListener("click", ()=>{
+    if (halfWrapEl) halfWrapEl.style.display = show ? "inline-flex" : "none";
+    if (halfResultWrapEl) halfResultWrapEl.style.display = show ? "inline-flex" : "none";
+  }
+
+  function updateRangeVisibility(){
+    const hasSingleTarget = !!(drawDateEl?.value) || !!(drawNoEl?.value);
+    const isMulti = (multiModeEl ? multiModeEl.checked : false);
+    const show = !hasSingleTarget && !isMulti;
+    if (rangeWrapEl) rangeWrapEl.style.display = show ? "inline-flex" : "none";
+  }
+
+  function pad2(x){ return String(x).padStart(2,"0"); }
+  function pad3(x){ return String(x).padStart(3,"0"); }
+  function yyFromYear(y){ return pad2(Number(y)%100); }
+
+  function buildDrawNoFromYearSeq(){
+    const y = yearEl.value;
+    const seq = parseInt(seqEl.value,10);
+    if(!y || !Number.isFinite(seq) || seq<=0) { drawNoEl.value=""; updateRangeVisibility(); return; }
+    drawNoEl.value = `${yyFromYear(y)}/${pad3(seq)}`;
+    updateRangeVisibility();
+  }
+
+  function getSingleTargetFromUI(){
+    const drawDate = (drawDateEl?.value || "").trim();
+    if (drawDate) return { drawDate };
+
+    let drawNo = (drawNoEl?.value || "").trim();
+    if (!drawNo) {
+      const y = (yearEl?.value || "").trim();
+      const s = parseInt(seqEl?.value, 10);
+      if (y && Number.isFinite(s) && s > 0) {
+        drawNo = `${yyFromYear(y)}/${pad3(s)}`;
+        if (drawNoEl) drawNoEl.value = drawNo;
+      }
+    }
+    drawNo = normalizeDrawNo(drawNo);
+    if (drawNo) return { drawNo };
+    return null;
+  }
+
+  (function initYears(){
+    const nowY = new Date().getFullYear();
+    for(let y=2002; y<=nowY; y++){
+      const opt=document.createElement("option");
+      opt.value=String(y);
+      opt.textContent=String(y);
+      yearEl.appendChild(opt);
+    }
+    yearEl.value=String(nowY);
+  })();
+
+  (function initMulti(){
+    if (!multiYearEl || !multiSeqEl) return;
+    const nowY = new Date().getFullYear();
+    for(let y=2002; y<=nowY; y++){
+      const opt=document.createElement("option");
+      opt.value=String(y);
+      opt.textContent=String(y);
+      multiYearEl.appendChild(opt);
+    }
+    multiYearEl.value=String(nowY);
+
+    for(let i=1;i<=200;i++){
+      const opt=document.createElement("option");
+      opt.value=String(i);
+      opt.textContent=String(i).padStart(3,"0");
+      multiSeqEl.appendChild(opt);
+    }
+    multiSeqEl.value="1";
+
+    function buildStartDrawNo(){
+      const y = multiYearEl.value;
+      const s = parseInt(multiSeqEl.value,10);
+      if(!y || !Number.isFinite(s) || s<=0){ startDrawNoEl.value=""; return; }
+      startDrawNoEl.value = `${yyFromYear(y)}/${pad3(s)}`;
+    }
+
+    multiYearEl.addEventListener("change", buildStartDrawNo);
+    multiSeqEl.addEventListener("change", buildStartDrawNo);
+    buildStartDrawNo();
+  })();
+
+  function setMultiMode(on){
+    if (multiControlsEl) multiControlsEl.style.display = on ? "flex" : "none";
+    drawDateEl.disabled = on;
+    yearEl.disabled = on;
+    seqEl.disabled = on;
+    document.getElementById("clearDraw").disabled = on;
+
+    if (on) {
       drawDateEl.value="";
       seqEl.value="";
       drawNoEl.value="";
       updateRangeVisibility();
+    }
+  }
+
+  if (multiModeEl) {
+    multiModeEl.addEventListener("change", ()=>{
+      setMultiMode(multiModeEl.checked);
+      updateRangeVisibility();
     });
-  
-    if (rangeEl) {
-      rangeEl.addEventListener("change", ()=>{
-        if(resultCard.style.display !== "none") runCheck();
-      });
-    }
-    if (multiCountEl) {
-      multiCountEl.addEventListener("change", ()=>{
-        if(resultCard.style.display !== "none") runCheck();
-      });
-    }
-  
-    // grid buttons 1..49
-    function makeGrid(){
-      gridEl.innerHTML="";
-      for(let i=1;i<=49;i++){
-        const b=document.createElement("button");
-        b.type="button";
-        b.className="nbtn";
-        b.textContent=String(i).padStart(2,"0");
-        b.dataset.n=String(i);
-        b.addEventListener("click", ()=>toggleNumber(i));
-        gridEl.appendChild(b);
-      }
-    }
-    makeGrid();
-  
-    function setType(newType){
-      type=newType;
-      picks=new Set(); bankers=new Set(); legs=new Set();
-      inputEl.value="";
-      inputErrEl.textContent="";
-      updateHint();
-      renderGrid();
-      updateChancesStake();
-      updateHalfVisibility();
-    }
-  
-    function updateHint(){
-      if(type==="single") ruleHintEl.textContent="單式：必須選 6 個號碼。";
-      if(type==="multiple") ruleHintEl.textContent="複式：最少 7 個號碼。";
-      if(type==="banker") ruleHintEl.textContent="膽拖：先點「膽」(最多 5 個)，再點「腳」。總數需 ≥7。";
-    }
-  
-    typeEls.forEach(r=>{
-      r.addEventListener("change", ()=>{
-        if(r.checked) setType(r.value);
-      });
+  }
+
+  yearEl.addEventListener("change", buildDrawNoFromYearSeq);
+  seqEl.addEventListener("input", buildDrawNoFromYearSeq);
+  drawDateEl.addEventListener("change", updateRangeVisibility);
+
+  document.getElementById("clearDraw").addEventListener("click", ()=>{
+    drawDateEl.value="";
+    seqEl.value="";
+    drawNoEl.value="";
+    updateRangeVisibility();
+  });
+
+  if (rangeEl) {
+    rangeEl.addEventListener("change", ()=>{
+      if(resultCard.style.display !== "none") runCheck();
     });
-  
-    function toggleNumber(n){
-      if(type==="single" || type==="multiple"){
-        if(picks.has(n)) picks.delete(n);
-        else picks.add(n);
-        syncInputFromState();
-        renderGrid();
-        updateChancesStake();
-        return;
-      }
-  
-      if(bankers.has(n)){
-        bankers.delete(n);
-        legs.add(n);
-      } else if(legs.has(n)){
-        legs.delete(n);
-      } else {
-        if(bankers.size < 5) bankers.add(n);
-        else legs.add(n);
-      }
-      for(const x of bankers) if(legs.has(x)) legs.delete(x);
-  
+  }
+  if (multiCountEl) {
+    multiCountEl.addEventListener("change", ()=>{
+      if(resultCard.style.display !== "none") runCheck();
+    });
+  }
+
+  function makeGrid(){
+    gridEl.innerHTML="";
+    for(let i=1;i<=49;i++){
+      const b=document.createElement("button");
+      b.type="button";
+      b.className="nbtn";
+      b.textContent=String(i).padStart(2,"0");
+      b.dataset.n=String(i);
+      b.addEventListener("click", ()=>toggleNumber(i));
+      gridEl.appendChild(b);
+    }
+  }
+  makeGrid();
+
+  function setType(newType){
+    type=newType;
+    picks=new Set(); bankers=new Set(); legs=new Set();
+    inputEl.value="";
+    inputErrEl.textContent="";
+    updateHint();
+    renderGrid();
+    updateChancesStake();
+    updateHalfVisibility();
+  }
+
+  function updateHint(){
+    if(type==="single") ruleHintEl.textContent="單式：必須選 6 個號碼。";
+    if(type==="multiple") ruleHintEl.textContent="複式：最少 7 個號碼。";
+    if(type==="banker") ruleHintEl.textContent="膽拖：先點「膽」(最多 5 個)，再點「腳」。總數需 ≥7。";
+  }
+
+  typeEls.forEach(r=>{
+    r.addEventListener("change", ()=>{
+      if(r.checked) setType(r.value);
+    });
+  });
+
+  function toggleNumber(n){
+    if(type==="single" || type==="multiple"){
+      if(picks.has(n)) picks.delete(n);
+      else picks.add(n);
       syncInputFromState();
       renderGrid();
       updateChancesStake();
+      return;
     }
-  
-    function renderGrid(){
-      const btns = gridEl.querySelectorAll(".nbtn");
-      btns.forEach(b=>{
-        const n = parseInt(b.dataset.n,10);
-        b.classList.remove("on","bank","leg");
-        if(type==="single" || type==="multiple"){
-          if(picks.has(n)) b.classList.add("on");
-        } else {
-          if(bankers.has(n)) b.classList.add("bank");
-          else if(legs.has(n)) b.classList.add("leg");
-        }
-      });
+
+    if(bankers.has(n)){
+      bankers.delete(n);
+      legs.add(n);
+    } else if(legs.has(n)){
+      legs.delete(n);
+    } else {
+      if(bankers.size < 5) bankers.add(n);
+      else legs.add(n);
     }
-  
-    function syncInputFromState(){
+    for(const x of bankers) if(legs.has(x)) legs.delete(x);
+
+    syncInputFromState();
+    renderGrid();
+    updateChancesStake();
+  }
+
+  function renderGrid(){
+    const btns = gridEl.querySelectorAll(".nbtn");
+    btns.forEach(b=>{
+      const n = parseInt(b.dataset.n,10);
+      b.classList.remove("on","bank","leg");
       if(type==="single" || type==="multiple"){
-        const arr = Array.from(picks).sort((a,b)=>a-b);
-        inputEl.value = arr.join(" ");
-        return;
-      }
-      const b = Array.from(bankers).sort((a,b)=>a-b).join(" ");
-      const l = Array.from(legs).sort((a,b)=>a-b).join(" ");
-      inputEl.value = (b || l) ? `${b} > ${l}`.trim() : "";
-    }
-  
-    function parseInputToState(){
-      const raw = (inputEl.value || "").trim();
-      inputErrEl.textContent="";
-      if(!raw){
-        if(type==="single"||type==="multiple") picks=new Set();
-        else { bankers=new Set(); legs=new Set(); }
-        return true;
-      }
-  
-      const numsFromPart = (s)=> s.trim().split(/[\s,，]+/).filter(Boolean).map(x=>parseInt(x,10)).filter(n=>Number.isFinite(n));
-  
-      if(type==="banker"){
-        const parts = raw.split(">");
-        const left = parts[0] ?? "";
-        const right = parts[1] ?? "";
-        const b = numsFromPart(left);
-        const l = numsFromPart(right);
-  
-        const bset = new Set(b);
-        const lset = new Set(l);
-        for(const x of bset) if(lset.has(x)) lset.delete(x);
-  
-        bankers = new Set(Array.from(bset).filter(n=>n>=1 && n<=49));
-        legs = new Set(Array.from(lset).filter(n=>n>=1 && n<=49));
-        return validateAndShow(false);
+        if(picks.has(n)) b.classList.add("on");
       } else {
-        const arr = numsFromPart(raw).filter(n=>n>=1 && n<=49);
-        picks = new Set(arr);
-        return validateAndShow(false);
+        if(bankers.has(n)) b.classList.add("bank");
+        else if(legs.has(n)) b.classList.add("leg");
       }
+    });
+  }
+
+  function syncInputFromState(){
+    if(type==="single" || type==="multiple"){
+      const arr = Array.from(picks).sort((a,b)=>a-b);
+      inputEl.value = arr.join(" ");
+      return;
     }
-  
-    function choose(n,k){
-      if(k<0||n<0||k>n) return 0;
-      k=Math.min(k,n-k);
-      let r=1;
-      for(let i=1;i<=k;i++) r=(r*(n-(k-i)))/i;
-      return Math.round(r);
+    const b = Array.from(bankers).sort((a,b)=>a-b).join(" ");
+    const l = Array.from(legs).sort((a,b)=>a-b).join(" ");
+    inputEl.value = (b || l) ? `${b} > ${l}`.trim() : "";
+  }
+
+  function parseInputToState(){
+    const raw = (inputEl.value || "").trim();
+    inputErrEl.textContent="";
+    if(!raw){
+      if(type==="single"||type==="multiple") picks=new Set();
+      else { bankers=new Set(); legs=new Set(); }
+      return true;
     }
-  
-    function validateAndShow(showError=true){
-      const half = (type==="single") ? false : halfEl.checked;
-      const unitStake = half ? 5 : 10;
-  
-      if(type==="single"){
-        if(picks.size!==6){
-          if(showError) inputErrEl.textContent="單式需要剛好 6 個號碼。";
-          updateChancesStake(0, unitStake);
-          return false;
-        }
-        updateChancesStake(1, unitStake);
-        return true;
-      }
-  
-      if(type==="multiple"){
-        if(picks.size<7){
-          if(showError) inputErrEl.textContent="複式需要最少 7 個號碼。";
-          updateChancesStake(0, unitStake);
-          return false;
-        }
-        const chances = choose(picks.size,6);
-        updateChancesStake(chances, unitStake);
-        return true;
-      }
-  
-      if(bankers.size<1 || bankers.size>5){
-        if(showError) inputErrEl.textContent="膽拖：膽需要 1–5 個。";
+
+    const numsFromPart = (s)=> s.trim().split(/[\s,，]+/).filter(Boolean).map(x=>parseInt(x,10)).filter(n=>Number.isFinite(n));
+
+    if(type==="banker"){
+      const parts = raw.split(">");
+      const left = parts[0] ?? "";
+      const right = parts[1] ?? "";
+      const b = numsFromPart(left);
+      const l = numsFromPart(right);
+
+      const bset = new Set(b);
+      const lset = new Set(l);
+      for(const x of bset) if(lset.has(x)) lset.delete(x);
+
+      bankers = new Set(Array.from(bset).filter(n=>n>=1 && n<=49));
+      legs = new Set(Array.from(lset).filter(n=>n>=1 && n<=49));
+      return validateAndShow(false);
+    } else {
+      const arr = numsFromPart(raw).filter(n=>n>=1 && n<=49);
+      picks = new Set(arr);
+      return validateAndShow(false);
+    }
+  }
+
+  function validateAndShow(showError=true){
+    const half = (type==="single") ? false : halfEl.checked;
+    const unitStake = half ? 5 : 10;
+
+    if(type==="single"){
+      if(picks.size!==6){
+        if(showError) inputErrEl.textContent="單式需要剛好 6 個號碼。";
         updateChancesStake(0, unitStake);
         return false;
       }
-      if(bankers.size + legs.size < 7){
-        if(showError) inputErrEl.textContent="膽拖：總數需 ≥ 7（膽 + 腳）。";
+      updateChancesStake(1, unitStake);
+      return true;
+    }
+
+    if(type==="multiple"){
+      if(picks.size<7){
+        if(showError) inputErrEl.textContent="複式需要最少 7 個號碼。";
         updateChancesStake(0, unitStake);
         return false;
       }
-      const t = 6 - bankers.size;
-      if(legs.size < t){
-        if(showError) inputErrEl.textContent=`膽拖：腳不足以補足 6 個號碼（需要至少 ${t} 個腳）。`;
-        updateChancesStake(0, unitStake);
-        return false;
-      }
-      const chances = choose(legs.size, t);
+      const chances = comb(picks.size,6);
       updateChancesStake(chances, unitStake);
       return true;
     }
-  
-    function updateChancesStake(chances=null, unitStake=null){
-      const half = (type==="single") ? false : halfEl.checked;
-      const u = unitStake ?? (half ? 5 : 10);
-  
-      let c = chances;
-      if(c===null){
-        if(type==="single") c = (picks.size===6) ? 1 : 0;
-        else if(type==="multiple") c = (picks.size>=7) ? choose(picks.size,6) : 0;
-        else {
-          const t = 6 - bankers.size;
-          c = (bankers.size>=1 && bankers.size<=5 && legs.size>=t) ? choose(legs.size,t) : 0;
-        }
+
+    if(bankers.size<1 || bankers.size>5){
+      if(showError) inputErrEl.textContent="膽拖：膽需要 1–5 個。";
+      updateChancesStake(0, unitStake);
+      return false;
+    }
+    if(bankers.size + legs.size < 7){
+      if(showError) inputErrEl.textContent="膽拖：總數需 ≥ 7（膽 + 腳）。";
+      updateChancesStake(0, unitStake);
+      return false;
+    }
+    const t = 6 - bankers.size;
+    if(legs.size < t){
+      if(showError) inputErrEl.textContent=`膽拖：腳不足以補足 6 個號碼（需要至少 ${t} 個腳）。`;
+      updateChancesStake(0, unitStake);
+      return false;
+    }
+    const chances = comb(legs.size, t);
+    updateChancesStake(chances, unitStake);
+    return true;
+  }
+
+  function updateChancesStake(chances=null, unitStake=null){
+    const half = (type==="single") ? false : halfEl.checked;
+    const u = unitStake ?? (half ? 5 : 10);
+
+    let c = chances;
+    if(c===null){
+      if(type==="single") c = (picks.size===6) ? 1 : 0;
+      else if(type==="multiple") c = (picks.size>=7) ? comb(picks.size,6) : 0;
+      else {
+        const t = 6 - bankers.size;
+        c = (bankers.size>=1 && bankers.size<=5 && legs.size>=t) ? comb(legs.size,t) : 0;
       }
-  
-      chancesPill.textContent = `份數：${c ? c.toLocaleString("en-US") : "—"}`;
-      stakePill.textContent = `投注額：${c ? "HK$ " + (c*u).toLocaleString("en-US") : "—"}`;
     }
-  
-    document.getElementById("clear").addEventListener("click", ()=>{
-      picks=new Set(); bankers=new Set(); legs=new Set();
-      inputEl.value="";
-      inputErrEl.textContent="";
-      renderGrid();
-      updateChancesStake();
-    });
-  
-    inputEl.addEventListener("input", ()=>{
-      parseInputToState();
-      renderGrid();
-      updateChancesStake();
-    });
-  
-    let syncingHalf = false;
-    function syncHalfUI(from) {
-      if (syncingHalf) return;
-      syncingHalf = true;
-      const v = from.checked;
-      halfEl.checked = v;
-      if (halfResultEl) halfResultEl.checked = v;
-      syncingHalf = false;
-    }
-  
-    halfEl.addEventListener("change", ()=>{
-      syncHalfUI(halfEl);
+
+    chancesPill.textContent = `份數：${c ? c.toLocaleString("en-US") : "—"}`;
+    stakePill.textContent = `投注額：${c ? "HK$ " + (c*u).toLocaleString("en-US") : "—"}`;
+  }
+
+  document.getElementById("clear").addEventListener("click", ()=>{
+    picks=new Set(); bankers=new Set(); legs=new Set();
+    inputEl.value="";
+    inputErrEl.textContent="";
+    renderGrid();
+    updateChancesStake();
+  });
+
+  inputEl.addEventListener("input", ()=>{
+    parseInputToState();
+    renderGrid();
+    updateChancesStake();
+  });
+
+  let syncingHalf = false;
+  function syncHalfUI(from) {
+    if (syncingHalf) return;
+    syncingHalf = true;
+    const v = from.checked;
+    halfEl.checked = v;
+    if (halfResultEl) halfResultEl.checked = v;
+    syncingHalf = false;
+  }
+
+  halfEl.addEventListener("change", ()=>{
+    syncHalfUI(halfEl);
+    updateChancesStake();
+    if(resultCard.style.display !== "none") runCheck();
+  });
+
+  if (halfResultEl) {
+    halfResultEl.addEventListener("change", ()=>{
+      syncHalfUI(halfResultEl);
       updateChancesStake();
       if(resultCard.style.display !== "none") runCheck();
     });
-  
-    if (halfResultEl) {
-      halfResultEl.addEventListener("change", ()=>{
-        syncHalfUI(halfResultEl);
-        updateChancesStake();
-        if(resultCard.style.display !== "none") runCheck();
-      });
-    }
-  
-    // -------------------------
-    // Payload builders (HARDENED for single draw)
-    // -------------------------
-    function buildScope(){
-      // Multi first
-      if (multiModeEl && multiModeEl.checked) {
-        return {
-          multi: true,
-          startDrawNo: (startDrawNoEl.value || "").trim(),
-          multiCount: toNum(multiCountEl.value, 10) || 10,
-        };
-      }
-  
-      // ✅ Single target (drawDate / drawNo) first — derive if needed
-      const single = getSingleTargetFromUI();
-      if (single) return single;
-  
-      // Range preset
-      const rp = rangeEl ? rangeEl.value : "60days";
-      const legacy = {};
-      if (rp === "60days") legacy.days = 60;
-      if (rp === "30issues") legacy.issues = 30;
-      if (rp === "60issues") legacy.issues = 60;
-      return { rangePreset: rp, ...legacy };
-    }
-  
-    function buildTicket(){
-      const half = (type==="single") ? false : !!halfEl.checked;
-  
-      if(type==="single"){
-        return { type: "single", half, picks: Array.from(picks).sort((a,b)=>a-b) };
-      }
-      if(type==="multiple"){
-        return { type: "multiple", half, picks: Array.from(picks).sort((a,b)=>a-b) };
-      }
+  }
+
+  // -------------------------
+  // Payload builders
+  // -------------------------
+  function buildScope(){
+    if (multiModeEl && multiModeEl.checked) {
       return {
-        type: "banker",
-        half,
-        bankers: Array.from(bankers).sort((a,b)=>a-b),
-        legs: Array.from(legs).sort((a,b)=>a-b),
+        multi: true,
+        startDrawNo: normalizeDrawNo((startDrawNoEl.value || "").trim()),
+        multiCount: toNum(multiCountEl.value, 10) || 10,
       };
     }
-  
-    function buildApiPayload(){
-      const ticket = buildTicket();
-      const scope = buildScope();
-  
-      const picksArr = Array.isArray(ticket.picks) ? ticket.picks : [];
-      const bankersArr = Array.isArray(ticket.bankers) ? ticket.bankers : [];
-      const legsArr = Array.isArray(ticket.legs) ? ticket.legs : [];
-  
-      const bets =
-        ticket.type === "banker"
-          ? [{ type: "banker", bankers: bankersArr, others: legsArr }]
-          : ticket.type === "multiple"
-          ? [{ type: "multiple", numbers: picksArr }]
-          : [{ type: "single", numbers: picksArr }];
-  
-      const base = {
-        // New shape
-        bets,
-        half: !!ticket.half,
-        scope,
-  
-        // Legacy flat keys
+
+    const single = getSingleTargetFromUI();
+    if (single) return single;
+
+    const rp = rangeEl ? rangeEl.value : "60days";
+    const legacy = {};
+    if (rp === "60days") legacy.days = 60;
+    if (rp === "30issues") legacy.issues = 30;
+    if (rp === "60issues") legacy.issues = 60;
+    return { rangePreset: rp, ...legacy };
+  }
+
+  function buildTicket(){
+    const half = (type==="single") ? false : !!halfEl.checked;
+
+    if(type==="single"){
+      return { type: "single", half, picks: Array.from(picks).sort((a,b)=>a-b) };
+    }
+    if(type==="multiple"){
+      return { type: "multiple", half, picks: Array.from(picks).sort((a,b)=>a-b) };
+    }
+    return {
+      type: "banker",
+      half,
+      bankers: Array.from(bankers).sort((a,b)=>a-b),
+      legs: Array.from(legs).sort((a,b)=>a-b),
+    };
+  }
+
+  function buildApiPayload(){
+    const ticket = buildTicket();
+    const scope = buildScope();
+
+    const picksArr = Array.isArray(ticket.picks) ? ticket.picks : [];
+    const bankersArr = Array.isArray(ticket.bankers) ? ticket.bankers : [];
+    const legsArr = Array.isArray(ticket.legs) ? ticket.legs : [];
+
+    const bets =
+      ticket.type === "banker"
+        ? [{ type: "banker", bankers: bankersArr, others: legsArr }]
+        : ticket.type === "multiple"
+        ? [{ type: "multiple", numbers: picksArr }]
+        : [{ type: "single", numbers: picksArr }];
+
+    __lastReqScope = { ...scope };
+
+    return {
+      bets,
+      half: !!ticket.half,
+      scope,
+      type: ticket.type,
+      halfBet: !!ticket.half,
+      picks: picksArr,
+      numbers: picksArr,
+      nums: picksArr,
+      bankers: bankersArr,
+      legs: legsArr,
+      others: legsArr,
+      ticket: {
         type: ticket.type,
-        halfBet: !!ticket.half,
+        half: !!ticket.half,
         picks: picksArr,
         numbers: picksArr,
         nums: picksArr,
         bankers: bankersArr,
         legs: legsArr,
         others: legsArr,
-  
-        // Legacy nested
-        ticket: {
-          type: ticket.type,
-          half: !!ticket.half,
-          picks: picksArr,
-          numbers: picksArr,
-          nums: picksArr,
-          bankers: bankersArr,
-          legs: legsArr,
-          others: legsArr,
-        },
-  
-        // ✅ Extra compatibility: some check.js reads query.*
-        query: { ...scope },
-  
-        // ✅ Also spread scope to top-level (some check.js reads body.drawNo / body.drawDate)
-        ...scope,
-      };
-  
-      __lastReqScope = { ...scope };
-      return base;
+      },
+      query: { ...scope },
+      ...scope,
+    };
+  }
+
+  // -------------------------
+  // Rendering
+  // -------------------------
+  function fmtYMD(ymd){
+    if(!ymd) return "";
+    const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m) return ymd;
+    return `${m[1]}年${m[2]}月${m[3]}日`;
+  }
+
+  function scopeToLabel(scope = {}) {
+    if (scope.drawNo) return `指定期數：${normalizeDrawNo(scope.drawNo)}`;
+    if (scope.drawDate) return `指定日期：${scope.drawDate}`;
+    if (scope.rangePreset === "60days" || scope.days === 60) return "近60日";
+    if (scope.rangePreset === "30issues" || scope.issues === 30) return "近30期";
+    if (scope.rangePreset === "60issues" || scope.issues === 60) return "近60期";
+    if (scope.days) return `近${scope.days}日`;
+    if (scope.issues) return `近${scope.issues}期`;
+    return "最近範圍";
+  }
+
+  function renderRecent(wins, titleLabel="近60日"){
+    const title = `${titleLabel}（只顯示有中獎）`;
+
+    const onlyWins = (wins || []).filter(w => w.isWin || (Array.isArray(w.summary) && w.summary.length) || isWinResult(w.__result || w));
+
+    if(onlyWins.length === 0){
+      return `<h4 style="margin:0 0 8px;">${title}</h4><div class="muted">未有中獎紀錄。</div>`;
     }
-  
-    // -------------------------
-    // Rendering
-    // -------------------------
-    function fmtYMD(ymd){
-      if(!ymd) return "";
-      const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if(!m) return ymd;
-      return `${m[1]}年${m[2]}月${m[3]}日`;
-    }
-  
-    function scopeToLabel(scope = {}) {
-      if (scope.drawNo) return `指定期數：${scope.drawNo}`;
-      if (scope.drawDate) return `指定日期：${scope.drawDate}`;
-      if (scope.rangePreset === "60days" || scope.days === 60) return "近60日";
-      if (scope.rangePreset === "30issues" || scope.issues === 30) return "近30期";
-      if (scope.rangePreset === "60issues" || scope.issues === 60) return "近60期";
-      if (scope.days) return `近${scope.days}日`;
-      if (scope.issues) return `近${scope.issues}期`;
-      return "最近範圍";
-    }
-  
-    function renderRecent(wins, titleLabel="近60日"){
-      const title = `${titleLabel}（只顯示有中獎）`;
-  
-      const list = (wins || []).map(w => {
-        const summary = Array.isArray(w.summary) ? w.summary : [];
-        const isWin = (w.isWin === true) || (summary.length > 0) || isWinResult(w.__result || w);
-        const extra = Number.isFinite(Number(w.extra)) ? Number(w.extra) : getExtraNo(w);
-        const numbers = Array.isArray(w.numbers) ? w.numbers : parseNumsAny(w.numbers);
-  
-        return {
-          ...w,
-          summary: summary.length ? summary : summaryFromResult(w.__result || w),
-          isWin,
-          extra,
-          numbers,
-        };
-      });
-  
-      const onlyWins = list.filter(w => w.isWin);
-  
-      if(onlyWins.length === 0){
-        return `<h4 style="margin:0 0 8px;">${title}</h4><div class="muted">未有中獎紀錄。</div>`;
-      }
-  
-      const items = onlyWins.map(w=>{
-        const sArr = (w.summary || []);
-        const s = sArr.length
-          ? sArr.map(x=>`${x.name}×${x.units}`).join("，")
-          : "中獎（獎項明細未提供）";
-  
-        const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
-        const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
-  
-        const hit = w.bestHit;
-        const hitText = hit
-          ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
-          : "";
-  
-        const nums = (w.numbers && w.numbers.length)
-          ? `正選：${w.numbers.join(" ")}　特別號：${String(w.extra).padStart(2,"0")}`
-          : "";
-  
-        return `
-          <li style="margin:10px 0;">
-            <div><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</div>
-            ${hitText ? `<div class="muted">${hitText}</div>` : ""}
-            ${nums ? `<div class="muted">${nums}</div>` : ""}
-          </li>
-        `;
-      }).join("");
-  
-      return `<h4 style="margin:0 0 8px;">${title}</h4><ol>${items}</ol>`;
-    }
-  
-    function renderSingleFromMerged(item, label) {
-      const summary = (item.summary || []);
-      const s = summary.length
-        ? summary.map(x => `${x.name} × ${toNum(x.units,0).toLocaleString("en-US")}`).join("，")
-        : "未中獎";
-  
-      const fixed = item.fixedTotal ? `｜固定獎金 HK$ ${Number(item.fixedTotal).toLocaleString("en-US")}` : "";
-      const note = item.topPrizeNote ? `｜${item.topPrizeNote}` : "";
-  
-      const hit = item.bestHit;
+
+    const items = onlyWins.map(w=>{
+      const sArr = (w.summary || []);
+      const s = sArr.length
+        ? sArr.map(x=>`${x.name}×${x.units}`).join("，")
+        : "中獎（獎項明細未提供）";
+
+      const fixed = w.fixedTotal ? `｜固定獎金 HK$ ${Number(w.fixedTotal).toLocaleString("en-US")}` : "";
+      const note = w.topPrizeNote ? `｜${w.topPrizeNote}` : "";
+
+      const hit = w.bestHit;
       const hitText = hit
         ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
         : "";
-  
-      const nums = (item.numbers && item.numbers.length)
-        ? `正選：${item.numbers.join(" ")}　特別號：${String(item.extra).padStart(2,"0")}`
+
+      const nums = (w.numbers && w.numbers.length)
+        ? `正選：${w.numbers.join(" ")}　特別號：${String(w.extra).padStart(2,"0")}`
         : "";
-  
+
       return `
-        <div class="muted">核對：${label}</div>
-        <div style="margin-top:8px;"><strong>${item.drawNo}</strong>（${fmtYMD(item.drawDate)}）：${s}${fixed}${note}</div>
-        ${hitText ? `<div class="muted" style="margin-top:6px;">${hitText}</div>` : ""}
-        ${nums ? `<div class="muted" style="margin-top:6px;">${nums}</div>` : ""}
+        <li style="margin:10px 0;">
+          <div><strong>${w.drawNo}</strong>（${fmtYMD(w.drawDate)}）：${s}${fixed}${note}</div>
+          ${hitText ? `<div class="muted">${hitText}</div>` : ""}
+          ${nums ? `<div class="muted">${nums}</div>` : ""}
+        </li>
       `;
-    }
-  
-    // -------------------------
-    // Run check
-    // -------------------------
-    async function runCheck(){
-      inputErrEl.textContent="";
-      const ok = validateAndShow(true);
-      if(!ok) return;
-  
-      statusEl.textContent="核對中…";
-  
-      resultCard.style.display = "block";
-      if (halfResultEl) halfResultEl.checked = halfEl.checked;
-  
-      mainResultEl.innerHTML = `<div class="muted">核對中…</div>`;
-      recentBlockEl.innerHTML = "";
-  
-      const payload = buildApiPayload();
-      console.log("[check] payload", payload);
-  
-      try{
-        const { res, data } = await fetchJsonNoStore("/api/check", {
-          method: "POST",
-          headers: { "content-type":"application/json" },
-          body: JSON.stringify(payload),
-        });
-  
-        console.log("[check] response", data);
-  
-        if(!res.ok || !data.ok){
-          statusEl.textContent="";
-          const msg = data.error || ("HTTP " + res.status);
-          inputErrEl.textContent = msg;
-          mainResultEl.innerHTML = `<div class="error">核對失敗：${msg}</div>`;
-          return;
-        }
-  
+    }).join("");
+
+    return `<h4 style="margin:0 0 8px;">${title}</h4><ol>${items}</ol>`;
+  }
+
+  function renderSingleComputed(ticket, drawItem, label) {
+    const draw = {
+      numbers: (drawItem.numbers || []).map(Number),
+      extra: Number(drawItem.extra || 0),
+    };
+
+    const computed = computeUnitsClient(ticket, draw);
+    const sArr = computed.summary || [];
+    const sText = sArr.length
+      ? sArr.map(x => `${x.name} × ${Number(x.units).toLocaleString("en-US")}`).join("，")
+      : "未中獎";
+
+    const hit = computed.bestHit;
+    const hitText = hit
+      ? `命中：${hit.main}個正選${hit.extra ? " + 特別號" : ""}`
+      : "";
+
+    return `
+      <div class="muted">核對：${label}</div>
+      <div style="margin-top:8px;"><strong>${drawItem.drawNo}</strong>（${fmtYMD(drawItem.drawDate)}）：${sText}</div>
+      ${hitText ? `<div class="muted" style="margin-top:6px;">${hitText}</div>` : ""}
+      <div class="muted" style="margin-top:6px;">正選：${draw.numbers.join(" ")}　特別號：${String(draw.extra).padStart(2,"0")}</div>
+    `;
+  }
+
+  // -------------------------
+  // Run check
+  // -------------------------
+  async function runCheck(){
+    inputErrEl.textContent="";
+    const ok = validateAndShow(true);
+    if(!ok) return;
+
+    statusEl.textContent="核對中…";
+    resultCard.style.display = "block";
+    if (halfResultEl) halfResultEl.checked = halfEl.checked;
+
+    mainResultEl.innerHTML = `<div class="muted">核對中…</div>`;
+    recentBlockEl.innerHTML = "";
+
+    const payload = buildApiPayload();
+    console.log("[check] payload", payload);
+
+    try{
+      const { res, data } = await fetchJsonNoStore("/api/check", {
+        method: "POST",
+        headers: { "content-type":"application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      console.log("[check] response", data);
+
+      if(!res.ok || !data.ok){
         statusEl.textContent="";
-        resultCard.style.display="block";
-        if (halfResultEl) halfResultEl.checked = halfEl.checked;
-  
-        // ✅ New API shape: draws + results
-        if (Array.isArray(data.draws) && Array.isArray(data.results)) {
-          const respScope = data.meta?.scope || data.scope || data.query || {};
-          const reqScope = __lastReqScope || payload.scope || payload.query || {};
-          const effectiveScope = (reqScope.drawNo || reqScope.drawDate) ? reqScope : respScope;
-  
-          const label = scopeToLabel(effectiveScope);
-          const merged = mergeDrawsResults(data.draws, data.results);
-  
-          // ✅ If user asked single, try extract that draw from merged
-          if (effectiveScope.drawNo) {
-            const target = merged.find(x => String(x.drawNo).trim() === String(effectiveScope.drawNo).trim());
-            if (target) {
-              mainResultEl.innerHTML = renderSingleFromMerged(target, label);
-              recentBlockEl.innerHTML = "";
-              return;
-            }
-            // not found: show hint + fallback to range view
-            mainResultEl.innerHTML =
-              `<div class="error">找不到指定期數（${effectiveScope.drawNo}），已改以範圍結果顯示。</div>`;
-            recentBlockEl.innerHTML = renderRecent(merged, scopeToLabel(respScope));
-            return;
-          }
-  
-          if (effectiveScope.drawDate) {
-            const target = merged.find(x => String(x.drawDate).trim() === String(effectiveScope.drawDate).trim());
-            if (target) {
-              mainResultEl.innerHTML = renderSingleFromMerged(target, label);
-              recentBlockEl.innerHTML = "";
-              return;
-            }
-            mainResultEl.innerHTML =
-              `<div class="error">找不到指定日期（${effectiveScope.drawDate}），已改以範圍結果顯示。</div>`;
-            recentBlockEl.innerHTML = renderRecent(merged, scopeToLabel(respScope));
-            return;
-          }
-  
-          // Range (normal)
-          mainResultEl.innerHTML =
-            `<div class="muted">核對範圍：${label}｜共 ${merged.length} 期｜${data.anyWin ? "有中獎" : "未有中獎"}</div>`;
-          recentBlockEl.innerHTML = renderRecent(merged, label);
-          return;
-        }
-  
-        // Fallback: old shapes (if any)
-        mainResultEl.innerHTML = `<div class="error">回應格式非預期：請檢查 /api/check 回傳 shape。</div>`;
-        console.log("Unexpected shape", data);
-  
-      } catch(e){
-        statusEl.textContent="";
-        inputErrEl.textContent = "核對失敗：" + e.message;
-        mainResultEl.innerHTML = `<div class="error">核對失敗：${e.message}</div>`;
+        const msg = data.error || ("HTTP " + res.status);
+        inputErrEl.textContent = msg;
+        mainResultEl.innerHTML = `<div class="error">核對失敗：${msg}</div>`;
+        return;
       }
+
+      statusEl.textContent="";
+      resultCard.style.display="block";
+      if (halfResultEl) halfResultEl.checked = halfEl.checked;
+
+      if (Array.isArray(data.draws) && Array.isArray(data.results)) {
+        const respScope = data.meta?.scope || data.scope || data.query || {};
+        const reqScope = __lastReqScope || payload.scope || payload.query || {};
+        const effectiveScope = (reqScope.drawNo || reqScope.drawDate) ? reqScope : respScope;
+
+        const label = scopeToLabel(effectiveScope);
+        const merged = mergeDrawsResults(data.draws, data.results);
+
+        // ✅ If single requested: use client-side compute to avoid server-side mismatch
+        if (effectiveScope.drawNo) {
+          const targetNo = normalizeDrawNo(effectiveScope.drawNo);
+          const item = merged.find(x => x.drawNoN === targetNo) || merged.find(x => normalizeDrawNo(x.drawNo) === targetNo);
+
+          if (!item) {
+            mainResultEl.innerHTML = `<div class="error">找不到指定期數（${targetNo}）。</div>`;
+            return;
+          }
+
+          const ticket = buildTicket();
+          mainResultEl.innerHTML = renderSingleComputed(ticket, item, label);
+          recentBlockEl.innerHTML = "";
+          return;
+        }
+
+        if (effectiveScope.drawDate) {
+          const targetDate = String(effectiveScope.drawDate).trim();
+          const item = merged.find(x => String(x.drawDate).trim() === targetDate);
+
+          if (!item) {
+            mainResultEl.innerHTML = `<div class="error">找不到指定日期（${targetDate}）。</div>`;
+            return;
+          }
+
+          const ticket = buildTicket();
+          mainResultEl.innerHTML = renderSingleComputed(ticket, item, label);
+          recentBlockEl.innerHTML = "";
+          return;
+        }
+
+        // Range view uses server results (and our summary extraction)
+        mainResultEl.innerHTML =
+          `<div class="muted">核對範圍：${label}｜共 ${merged.length} 期｜${data.anyWin ? "有中獎" : "未有中獎"}</div>`;
+        recentBlockEl.innerHTML = renderRecent(merged, label);
+        return;
+      }
+
+      mainResultEl.innerHTML = `<div class="error">回應格式非預期：請檢查 /api/check 回傳 shape。</div>`;
+      console.log("Unexpected shape", data);
+
+    } catch(e){
+      statusEl.textContent="";
+      inputErrEl.textContent = "核對失敗：" + e.message;
+      mainResultEl.innerHTML = `<div class="error">核對失敗：${e.message}</div>`;
     }
-  
-    document.getElementById("check").addEventListener("click", runCheck);
-  
-    // init
-    updateHint();
-    updateChancesStake();
-    updateHalfVisibility();
-    updateRangeVisibility();
-  </script>
+  }
+
+  document.getElementById("check").addEventListener("click", runCheck);
+
+  // init
+  updateHint();
+  updateChancesStake();
+  updateHalfVisibility();
+  updateRangeVisibility();
+</script>
+
 
 </body>
 </html>
