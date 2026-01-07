@@ -813,6 +813,53 @@
     return lines.join("");
   }
 
+  function scopeToLabel(scope = {}) {
+    if (scope.drawNo) return `指定期數：${scope.drawNo}`;
+    if (scope.drawDate) return `指定日期：${scope.drawDate}`;
+    if (scope.rangePreset === "60days" || scope.days === 60) return "近60日";
+    if (scope.rangePreset === "30issues" || scope.issues === 30) return "近30期";
+    if (scope.rangePreset === "60issues" || scope.issues === 60) return "近60期";
+    if (scope.days) return `近${scope.days}日`;
+    if (scope.issues) return `近${scope.issues}期`;
+    return "最近範圍";
+  }
+  
+  function mergeDrawsResults(draws = [], results = []) {
+    return draws.map((d, i) => {
+      const r = results[i] || {};
+  
+      const numbers =
+        parseNumsAny(d.numbersArr).length ? parseNumsAny(d.numbersArr) :
+        parseNumsAny(d.numbers).length ? parseNumsAny(d.numbers) :
+        parseNumsAny(d.numbersStr);
+  
+      const extra = getExtraNo(d);
+  
+      const summary =
+        Array.isArray(r.summary) ? r.summary :
+        deriveSummaryFromUnits(r.units);
+  
+      const fixedTotal =
+        Number(r.fixedTotal ?? r.fixedAmount?.totalFixed ?? r.fixedAmount?.total ?? r.fixed) || 0;
+  
+      return {
+        // draw fields
+        drawNo: d.drawNo,
+        drawDate: d.drawDate,
+        numbers,
+        extra,
+  
+        // result fields (for renderRecent)
+        summary,
+        units: r.units,
+        bestHit: r.bestHit,
+        fixedTotal,
+        topPrizeNote: r.topPrizeNote,
+      };
+    });
+  }
+
+
   function renderRecent(wins, titleLabel="近60日"){
     const title = `${titleLabel}（只顯示有中獎）`;
   
@@ -855,27 +902,27 @@
     inputErrEl.textContent="";
     const ok = validateAndShow(true);
     if(!ok) return;
-
+  
     statusEl.textContent="核對中…";
-
+  
     resultCard.style.display = "block";
     if (halfResultEl) halfResultEl.checked = halfEl.checked;
-
+  
     mainResultEl.innerHTML = `<div class="muted">核對中…</div>`;
     recentBlockEl.innerHTML = "";
-
+  
     const payload = buildApiPayload();
-
-    // DEBUG: 如果仍然冇中獎，先睇 server 究竟收到咩
     console.log("[check] payload", payload);
-
+  
     try{
       const { res, data } = await fetchJsonNoStore("/api/check", {
         method: "POST",
         headers: { "content-type":"application/json" },
         body: JSON.stringify(payload),
       });
-
+  
+      console.log("[check] response keys", Object.keys(data || {}), data);
+  
       if(!res.ok || !data.ok){
         statusEl.textContent="";
         const msg = data.error || ("HTTP " + res.status);
@@ -883,39 +930,58 @@
         mainResultEl.innerHTML = `<div class="error">核對失敗：${msg}</div>`;
         return;
       }
-
-      console.log("[check] response keys", Object.keys(data || {}), data);
-
+  
       statusEl.textContent="";
       resultCard.style.display="block";
       if (halfResultEl) halfResultEl.checked = halfEl.checked;
-
-      // Prefer explicit flags if API provides
+  
+      // -------------------------
+      // ✅ NEW API SHAPE support:
+      // { draws: [...], results: [...], meta: { scope, drawCount }, anyWin }
+      // -------------------------
+      if (Array.isArray(data.draws) && Array.isArray(data.results)) {
+        const scope = data.meta?.scope || data.scope || {};
+        const label = scopeToLabel(scope);
+  
+        const merged = mergeDrawsResults(data.draws, data.results);
+  
+        mainResultEl.innerHTML =
+          `<div class="muted">核對範圍：${label}｜共 ${merged.length} 期｜${data.anyWin ? "有中獎" : "未有中獎"}</div>`;
+  
+        // renderRecent 會自動「只顯示有中獎」
+        recentBlockEl.innerHTML = renderRecent(merged, label);
+        return;
+      }
+  
+      // -------------------------
+      // ✅ OLD API SHAPE fallback:
+      // data.main / data.recentWins / data.rangeInfo / data.multiInfo
+      // -------------------------
       const q = data.query || data.scope || {};
       const isMulti = !!data.multiInfo || !!q.multi;
-
+  
       if (isMulti) {
-        mainResultEl.innerHTML = `<div><strong>多期核對：</strong>由 ${data.multiInfo?.startDrawNo || q.startDrawNo} 起，共 ${data.multiInfo?.checked || "—"} 期（設定：${data.multiInfo?.count || q.multiCount || "—"} 期）</div>`;
-        recentBlockEl.innerHTML = renderRecent((data.multiWins || []).map(normalizeWinItem), `多期核對（${data.multiInfo?.startDrawNo || q.startDrawNo} 起）`);
+        mainResultEl.innerHTML =
+          `<div><strong>多期核對：</strong>由 ${data.multiInfo?.startDrawNo || q.startDrawNo} 起，共 ${data.multiInfo?.checked || "—"} 期（設定：${data.multiInfo?.count || q.multiCount || "—"} 期）</div>`;
+        recentBlockEl.innerHTML = renderRecent(data.multiWins || [], `多期核對（${data.multiInfo?.startDrawNo || q.startDrawNo} 起）`);
       } else if (!q.drawNo && !q.drawDate) {
-        mainResultEl.innerHTML = data.rangeInfo?.label ? `<div class="muted">核對範圍：${data.rangeInfo.label}</div>` : "";
-        const label = data.rangeInfo?.label || "近60日";
-        recentBlockEl.innerHTML = renderRecent((data.recentWins || []).map(normalizeWinItem), label);
+        mainResultEl.innerHTML = data.rangeInfo?.label
+          ? `<div class="muted">核對範圍：${data.rangeInfo.label}</div>`
+          : "";
+        const label2 = data.rangeInfo?.label || "近60日";
+        recentBlockEl.innerHTML = renderRecent(data.recentWins || [], label2);
       } else {
         mainResultEl.innerHTML = renderMain(data.main);
         recentBlockEl.innerHTML = "";
       }
-
-      // Optional: dev debug
-      // console.log("check payload", payload);
-      // console.log("check response", data);
-
+  
     }catch(e){
       statusEl.textContent="";
       inputErrEl.textContent = "核對失敗：" + e.message;
       mainResultEl.innerHTML = `<div class="error">核對失敗：${e.message}</div>`;
     }
   }
+
 
   document.getElementById("check").addEventListener("click", runCheck);
 
