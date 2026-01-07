@@ -825,88 +825,135 @@
   }
 
   function deriveSummaryFromUnitsFlexible(units) {
-  if (!units) return [];
-
-  // Case 1: array of prize objects
-  if (Array.isArray(units)) {
-    // e.g. [{div:4, units:2}] / [{division:4, count:2}]
-    return units
-      .map((p) => {
-        const div = toNum(p.div ?? p.division ?? p.tier ?? p.prize, 0);
-        const u = toNum(p.units ?? p.count ?? p.n ?? 0, 0);
-        if (div < 1 || div > 7 || u <= 0) return null;
-        const nameMap = {1:"頭獎",2:"二獎",3:"三獎",4:"四獎",5:"五獎",6:"六獎",7:"七獎"};
-        return { name: nameMap[div] || `第${div}獎`, units: u };
-      })
-      .filter(Boolean);
-  }
-
-  // Case 2: object map
-  if (typeof units === "object") {
+    if (!units) return [];
+  
     const nameMap = {1:"頭獎",2:"二獎",3:"三獎",4:"四獎",5:"五獎",6:"六獎",7:"七獎"};
-    const out = [];
-
-    for (let div = 1; div <= 7; div++) {
-      const keys = [
-        `div${div}`,         // div4
-        String(div),         // "4"
-        `d${div}`,           // d4
-        `division${div}`,    // division4
-        `tier${div}`,        // tier4
-      ];
-
-      let val = 0;
-      for (const k of keys) {
-        if (Number.isFinite(Number(units[k]))) { val = Number(units[k]); break; }
-      }
-      if (val > 0) out.push({ name: nameMap[div], units: val });
+  
+    // Case 1: array of prize objects
+    if (Array.isArray(units)) {
+      return units
+        .map((p) => {
+          const div = toNum(p.div ?? p.division ?? p.tier ?? p.prize ?? p.level, 0);
+          const u = toNum(p.units ?? p.count ?? p.n ?? p.qty ?? p.value ?? 0, 0);
+          if (div < 1 || div > 7 || u <= 0) return null;
+          return { name: nameMap[div] || `第${div}獎`, units: u };
+        })
+        .filter(Boolean);
     }
-
-    return out;
+  
+    // Case 2: object map
+    if (typeof units === "object") {
+      const out = [];
+  
+      for (let div = 1; div <= 7; div++) {
+        const keys = [
+          `div${div}`,         // div4
+          String(div),         // "4"
+          `d${div}`,           // d4
+          `division${div}`,    // division4
+          `tier${div}`,        // tier4
+          `prize${div}`,       // prize4
+          `level${div}`,       // level4
+        ];
+  
+        let val = 0;
+        for (const k of keys) {
+          if (Number.isFinite(Number(units[k]))) { val = Number(units[k]); break; }
+        }
+        if (val > 0) out.push({ name: nameMap[div], units: val });
+      }
+  
+      return out;
+    }
+  
+    return [];
   }
 
-  return [];
-}
 
-function summaryFromResult(r) {
-  if (!r) return [];
-
-  if (Array.isArray(r.summary) && r.summary.length) return r.summary;
-
-  // some APIs return prizes/wins array
-  if (Array.isArray(r.prizes) && r.prizes.length) {
-    return r.prizes
-      .map(p => ({
-        name: p.name || (p.div ? `第${p.div}獎` : "獎項"),
-        units: toNum(p.units ?? p.count ?? 0, 0),
-      }))
-      .filter(x => x.units > 0);
+  function summaryFromResult(r) {
+    if (!r) return [];
+  
+    // 1) direct summary
+    if (Array.isArray(r.summary) && r.summary.length) return r.summary;
+  
+    // 2) common arrays
+    for (const key of ["prizes", "wins", "breakdown", "details"]) {
+      if (Array.isArray(r[key]) && r[key].length) {
+        const s = deriveSummaryFromUnitsFlexible(r[key]);
+        if (s.length) return s;
+  
+        // fallback map if array is already like {name, units}
+        const s2 = r[key]
+          .map(p => ({ name: p.name || p.title || "", units: toNum(p.units ?? p.count ?? 0, 0) }))
+          .filter(x => x.units > 0 && x.name);
+        if (s2.length) return s2;
+      }
+    }
+  
+    // 3) common objects
+    const directCandidates = [
+      "units",
+      "prizeUnits",
+      "divUnits",
+      "divisionUnits",
+      "divisions",
+      "division",
+      "prize",
+      "prizeCount",
+      "winUnits",
+      "winCount",
+      "counts",
+    ];
+  
+    for (const k of directCandidates) {
+      const s = deriveSummaryFromUnitsFlexible(r[k]);
+      if (s.length) return s;
+    }
+  
+    // 4) DEEP SCAN: search nested objects up to depth for any "div4 / 4 / d4 / tier4 ..." pattern
+    const visited = new Set();
+  
+    function scan(obj, depth = 0) {
+      if (!obj || typeof obj !== "object") return null;
+      if (visited.has(obj)) return null;
+      visited.add(obj);
+  
+      // Try this object itself as units-map
+      const sHere = deriveSummaryFromUnitsFlexible(obj);
+      if (sHere.length) return sHere;
+  
+      if (depth >= 5) return null;
+  
+      // Walk children
+      if (Array.isArray(obj)) {
+        for (const it of obj) {
+          const s = scan(it, depth + 1);
+          if (s && s.length) return s;
+        }
+        return null;
+      }
+  
+      for (const key of Object.keys(obj)) {
+        const val = obj[key];
+  
+        // quick skip primitives
+        if (!val || typeof val !== "object") continue;
+  
+        // prefer likely keys
+        const likely = /unit|units|div|division|tier|prize|breakdown|detail|count/i.test(key);
+  
+        const s = scan(val, depth + (likely ? 1 : 1));
+        if (s && s.length) return s;
+      }
+      return null;
+    }
+  
+    const deep = scan(r, 0);
+    if (deep && deep.length) return deep;
+  
+    return [];
   }
 
-  if (Array.isArray(r.wins) && r.wins.length) {
-    return r.wins
-      .map(p => ({
-        name: p.name || (p.div ? `第${p.div}獎` : "獎項"),
-        units: toNum(p.units ?? p.count ?? 0, 0),
-      }))
-      .filter(x => x.units > 0);
-  }
-
-  // units-like objects (many variants)
-  const units =
-    r.units ||
-    r.prizeUnits ||
-    r.divUnits ||
-    r.divisionUnits ||
-    r.divisions ||
-    r.prize ||
-    null;
-
-  const derived = deriveSummaryFromUnitsFlexible(units);
-  if (derived.length) return derived;
-
-  return [];
-  }
   
   function isWinResult(r) {
     if (!r) return false;
