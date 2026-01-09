@@ -38,11 +38,12 @@ export async function onRequest({ env }) {
       note: "下期資料以官方公佈為準",
     },
     disclaimer: "本頁資料僅供參考，以官方公佈為準。",
+  };
 
   return new Response(JSON.stringify(payload), {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
     },
-  }
+  });
 }
