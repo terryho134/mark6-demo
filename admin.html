@@ -80,199 +80,454 @@
   <p><a href="/">返回首頁</a></p>
 
   <script>
+    // =========================
+    // Admin page script
+    // - Draw result upsert: /api/admin/upsert  (X-Admin-Key)
+    // - Next draw meta (independent): /api/admin/next (Authorization: Bearer <key>)
+    // =========================
+  
     const keyEl = document.getElementById("key");
     const msgEl = document.getElementById("msg");
-
+  
     const drawNoEl = document.getElementById("drawNo");
     const drawDateEl = document.getElementById("drawDate");
+  
     const nextDrawDateEl = document.getElementById("nextDrawDate");
     const nextDrawNoEl = document.getElementById("nextDrawNo");
     const nextJackpotMEl = document.getElementById("nextJackpotM");
-
+  
     const prefillHintEl = document.getElementById("prefillHint");
     const jackpotHintEl = document.getElementById("jackpotHint");
-
-    // load saved key
-    const saved = localStorage.getItem("ADMIN_KEY");
-    if(saved) keyEl.value = saved;
-
-    document.getElementById("saveKey").addEventListener("click", () => {
-      localStorage.setItem("ADMIN_KEY", keyEl.value || "");
-      msgEl.innerHTML = `<span class="ok">已記住密碼（只儲存在你部電腦瀏覽器）。</span>`;
-    });
-
-    function parseNums(s){
-      return (s || "").trim().split(/[\s,，]+/).filter(Boolean).map(x => parseInt(x,10));
+  
+    const numsEl = document.getElementById("nums");
+    const specialEl = document.getElementById("special");
+  
+    const saveKeyBtn = document.getElementById("saveKey");
+    const submitBtn = document.getElementById("submit");
+  
+    // -------------------------
+    // Key storage
+    // -------------------------
+    const SAVED_KEY_NAME = "ADMIN_KEY";
+    const saved = localStorage.getItem(SAVED_KEY_NAME);
+    if (saved) keyEl.value = saved;
+  
+    function setMsg(html) {
+      if (!msgEl) return;
+      msgEl.innerHTML = html || "";
     }
-
-    function parseDrawNo(s){
+  
+    function getAdminKey() {
+      return (keyEl?.value || "").trim();
+    }
+  
+    if (saveKeyBtn) {
+      saveKeyBtn.addEventListener("click", async () => {
+        localStorage.setItem(SAVED_KEY_NAME, keyEl.value || "");
+        setMsg(`<span class="ok">已記住密碼（只儲存在你部電腦瀏覽器）。</span>`);
+        // 有 key 就嘗試載入已儲存的「下期資料」
+        try {
+          await loadNextMetaIfPossible();
+        } catch (e) {
+          // 不阻塞
+          console.warn(e);
+        }
+      });
+    }
+  
+    // -------------------------
+    // Parsing helpers
+    // -------------------------
+    function parseNums(s) {
+      return (s || "")
+        .trim()
+        .split(/[\s,，]+/)
+        .filter(Boolean)
+        .map((x) => parseInt(x, 10))
+        .filter((n) => Number.isFinite(n) && n >= 1 && n <= 49);
+    }
+  
+    function parseDrawNo(s) {
       s = String(s || "").trim();
-    
+  
       // 新格式：YY/XXX 例：25/018
-      let m = s.match(/^(\d{2})\s*\/\s*(\d{3})$/);
-      if(m){
-        const yy = parseInt(m[1],10);
-        const seq = parseInt(m[2],10);
-        const yearFull = 2000 + yy; // 假設 2000-2099
+      let m = s.match(/^(\d{2})\s*\/\s*(\d{1,3})$/);
+      if (m) {
+        const yy = parseInt(m[1], 10);
+        const seq = parseInt(m[2], 10);
+        const yearFull = 2000 + yy; // assume 2000-2099
         return { yy, yearFull, seq };
       }
-    
-      // 兼容舊格式（如你 DB 以前有）：XXX/YYYY 例：018/2025
+  
+      // 舊格式（兼容）：XXX/YYYY 例：018/2025
       m = s.match(/^(\d{1,3})\s*\/\s*(\d{4})$/);
-      if(m){
-        const seq = parseInt(m[1],10);
-        const yearFull = parseInt(m[2],10);
+      if (m) {
+        const seq = parseInt(m[1], 10);
+        const yearFull = parseInt(m[2], 10);
         const yy = yearFull % 100;
         return { yy, yearFull, seq };
       }
-    
+  
       return null;
     }
-    
-    function formatDrawNo(yearFull, seq){
+  
+    function formatDrawNo(yearFull, seq) {
       const yy = String(yearFull % 100).padStart(2, "0");
       const s = String(seq).padStart(3, "0");
       return `${yy}/${s}`;
     }
-    
-    // 計算下期期數：根據「今期 seq」+「下期日期 year」推算
-    function computeNextDrawNo(){
-      const cur = parseDrawNo(drawNoEl.value);
-    
-      const nd = nextDrawDateEl.value; // YYYY-MM-DD
-      if(!nd || !cur) { nextDrawNoEl.value = ""; return; }
-    
-      const nextYearFull = parseInt(nd.slice(0,4),10);
-      if(!Number.isFinite(nextYearFull)) { nextDrawNoEl.value = ""; return; }
-    
-      if(nextYearFull === cur.yearFull){
-        nextDrawNoEl.value = formatDrawNo(nextYearFull, cur.seq + 1);
-      }else{
+  
+    function yearFromYMD(ymd) {
+      const m = String(ymd || "").match(/^(\d{4})-/);
+      return m ? parseInt(m[1], 10) : null;
+    }
+  
+    // -------------------------
+    // Next draw auto-calc (base can be:
+    // 1) user-entered drawNoEl (if editing current draw result)
+    // 2) lastDraw from DB (if only updating next meta)
+    // -------------------------
+    let lastDraw = null;
+    let drawNoTouched = false;
+  
+    function computeNextDrawNo() {
+      const nd = (nextDrawDateEl?.value || "").trim(); // YYYY-MM-DD
+      const nextYearFull = yearFromYMD(nd);
+  
+      const base =
+        parseDrawNo(drawNoEl?.value) ||
+        parseDrawNo(lastDraw?.drawNo) ||
+        null;
+  
+      if (!nextYearFull || !base) {
+        if (nextDrawNoEl) nextDrawNoEl.value = "";
+        return;
+      }
+  
+      if (nextYearFull === base.yearFull) {
+        nextDrawNoEl.value = formatDrawNo(nextYearFull, base.seq + 1);
+      } else {
         nextDrawNoEl.value = formatDrawNo(nextYearFull, 1); // 新一年 -> YY/001
       }
     }
-
-
-    // 預填：由 DB 取最新一期，再推算「你下一期要輸入」的 drawNo
-    let lastDraw = null;
-    let drawNoTouched = false;
-
-    drawNoEl.addEventListener("input", () => {
-      drawNoTouched = true;
-      computeNextDrawNo();
-    });
-
-    drawDateEl.addEventListener("change", () => {
-      if(!lastDraw || drawNoTouched) return;
-    
-      const y = drawDateEl.value ? parseInt(drawDateEl.value.slice(0,4),10) : null;
-      const last = parseDrawNo(lastDraw.drawNo);
-      const lastYearByDate = lastDraw.drawDate ? parseInt(lastDraw.drawDate.slice(0,4),10) : null;
-      const lastYearFull = Number.isFinite(lastYearByDate) ? lastYearByDate : (last ? last.yearFull : null);
-    
-      if(!y || !last || !lastYearFull) return;
-    
-      if(y === lastYearFull){
-        drawNoEl.value = formatDrawNo(y, last.seq + 1);
-      }else{
-        drawNoEl.value = formatDrawNo(y, 1);
+  
+    function updateJackpotHint() {
+      const m = parseInt(nextJackpotMEl?.value || "", 10);
+      if (Number.isFinite(m) && m >= 0) {
+        if (jackpotHintEl) jackpotHintEl.textContent = `= 約 HK$ ${(m * 1000000).toLocaleString("en-US")}`;
+      } else {
+        if (jackpotHintEl) jackpotHintEl.textContent = "";
       }
-    
-      prefillHintEl.textContent = `(已根據 DB 最新一期自動預填)`;
-      computeNextDrawNo();
-    });
-
-
-    nextDrawDateEl.addEventListener("change", computeNextDrawNo);
-
-    nextJackpotMEl.addEventListener("input", () => {
-      const m = parseInt(nextJackpotMEl.value, 10);
-      if(Number.isFinite(m)){
-        jackpotHintEl.textContent = `= 約 HK$ ${(m*1000000).toLocaleString("en-US")}`;
-      }else{
-        jackpotHintEl.textContent = "";
-      }
-    });
-
-    async function prefillFromDB(){
-      try{
-        const res = await fetch("/api/latest?v=" + Date.now(), { cache: "no-store" });
-        if(!res.ok) return;
-        const data = await res.json();
-        if(!data?.draw?.drawNo) return;
-
-        lastDraw = data.draw;
-
-        // 只在 drawNo 空白時預填（避免覆蓋你手動輸入）
-        if(!drawNoEl.value){
-          // 用 DB 最新一期（lastDraw）去推算「你下一期要輸入」的期數
-          const last = parseDrawNo(lastDraw.drawNo);
-          const lastYearByDate = lastDraw.drawDate ? parseInt(lastDraw.drawDate.slice(0,4),10) : null;
-        
-          // 以 drawDate 的年份為主（最穩）
-          const lastYearFull = Number.isFinite(lastYearByDate) ? lastYearByDate : (last ? last.yearFull : null);
-          const todayYearFull = new Date().getFullYear();
-        
-          if(last && lastYearFull === todayYearFull){
-            drawNoEl.value = formatDrawNo(todayYearFull, last.seq + 1);
-          }else{
-            // 跨年（或解析不到 last），就先預填為今年第 1 期（你亦可之後改攪珠日期再自動修正）
-            drawNoEl.value = formatDrawNo(todayYearFull, 1);
-          }
-        
-          prefillHintEl.textContent = `(已根據 DB 最新一期自動預填；如跨年，改「攪珠日期」會自動修正)`;
-          computeNextDrawNo();
-        }
-
-
-        // 順便預填已存的下期資料（可選）
-        if(data?.nextDraw?.drawDate && !nextDrawDateEl.value) nextDrawDateEl.value = data.nextDraw.drawDate;
-        if(data?.nextDraw?.jackpotMillion !== null && data?.nextDraw?.jackpotMillion !== undefined && !nextJackpotMEl.value){
-          nextJackpotMEl.value = data.nextDraw.jackpotMillion;
-          nextJackpotMEl.dispatchEvent(new Event("input"));
-        }
+    }
+  
+    if (drawNoEl) {
+      drawNoEl.addEventListener("input", () => {
+        drawNoTouched = true;
         computeNextDrawNo();
-      }catch(e){
+      });
+    }
+  
+    if (drawDateEl) {
+      drawDateEl.addEventListener("change", () => {
+        // 如果用戶手動改過 drawNo，就唔自動覆蓋
+        if (!lastDraw || drawNoTouched) return;
+  
+        const y = yearFromYMD(drawDateEl.value);
+        const last = parseDrawNo(lastDraw.drawNo);
+        const lastYearByDate = yearFromYMD(lastDraw.drawDate);
+        const lastYearFull = Number.isFinite(lastYearByDate) ? lastYearByDate : (last ? last.yearFull : null);
+  
+        if (!y || !last || !lastYearFull) return;
+  
+        if (y === lastYearFull) {
+          drawNoEl.value = formatDrawNo(y, last.seq + 1);
+        } else {
+          drawNoEl.value = formatDrawNo(y, 1);
+        }
+  
+        if (prefillHintEl) prefillHintEl.textContent = `(已根據 DB 最新一期自動預填)`;
+        computeNextDrawNo();
+      });
+    }
+  
+    if (nextDrawDateEl) nextDrawDateEl.addEventListener("change", computeNextDrawNo);
+    if (nextJackpotMEl) nextJackpotMEl.addEventListener("input", updateJackpotHint);
+  
+    // -------------------------
+    // Fetch helpers
+    // -------------------------
+    async function fetchJsonNoStore(url, init = {}) {
+      const u = new URL(url, location.origin);
+      u.searchParams.set("__ts", Date.now().toString()); // bust browser cache
+  
+      const res = await fetch(u.toString(), {
+        cache: "no-store",
+        headers: {
+          accept: "application/json",
+          ...(init.headers || {}),
+        },
+        ...init,
+      });
+  
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`API 回傳非 JSON（HTTP ${res.status}）。前 200 字：` + text.slice(0, 200));
+      }
+      return { res, data };
+    }
+  
+    // -------------------------
+    // Prefill: latest draw for convenience (no auth)
+    // Prefer /api/draws?limit=1; fallback to /api/latest
+    // -------------------------
+    async function prefillLatestDraw() {
+      try {
+        // 1) try /api/draws
+        let { res, data } = await fetchJsonNoStore("/api/draws?limit=1");
+        if (res.ok && data?.ok && Array.isArray(data.draws) && data.draws[0]?.drawNo) {
+          lastDraw = data.draws[0];
+          return;
+        }
+  
+        // 2) fallback /api/latest
+        ({ res, data } = await fetchJsonNoStore("/api/latest"));
+        if (res.ok && data?.draw?.drawNo) {
+          lastDraw = data.draw;
+          return;
+        }
+      } catch (e) {
         // ignore
       }
     }
-
-    document.getElementById("submit").addEventListener("click", async () => {
-      msgEl.textContent = "提交中…";
-
-      const payload = {
-        drawNo: drawNoEl.value.trim(),
-        drawDate: drawDateEl.value,
-        numbers: parseNums(document.getElementById("nums").value),
-        special: parseInt(document.getElementById("special").value, 10),
-
-        // 下期資料
-        nextDrawDate: nextDrawDateEl.value || null,
-        nextDrawNo: nextDrawNoEl.value || null,
-        nextJackpotM: nextJackpotMEl.value ? parseInt(nextJackpotMEl.value, 10) : null
-      };
-
-      try{
-        const res = await fetch("/api/admin/upsert", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "X-Admin-Key": keyEl.value || ""
-          },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json().catch(()=> ({}));
-        if(!res.ok){
-          msgEl.innerHTML = `<span class="error">失敗：${data.error || ("HTTP " + res.status)}</span>`;
-          return;
-        }
-        msgEl.innerHTML = `<span class="ok">成功！刷新首頁即可見到更新。</span>`;
-      }catch(e){
-        msgEl.innerHTML = `<span class="error">提交失敗：${e.message}</span>`;
+  
+    // -------------------------
+    // Load next meta via /api/admin/next (needs auth)
+    // -------------------------
+    async function loadNextMetaIfPossible() {
+      const key = getAdminKey();
+      if (!key) return; // no key yet
+  
+      const { res, data } = await fetchJsonNoStore("/api/admin/next", {
+        method: "GET",
+        headers: { authorization: "Bearer " + key },
+      });
+  
+      if (!res.ok || !data?.ok) {
+        // 唔阻 admin 用，只係提示（通常係未輸入/輸入錯 key）
+        console.warn("loadNextMeta failed", data);
+        return;
       }
-    });
-
-    prefillFromDB();
+  
+      const next = data.next || {};
+      if (nextDrawDateEl && !nextDrawDateEl.value && next.drawDate) nextDrawDateEl.value = next.drawDate;
+  
+      // 如果 API 有存 drawNo，就用；否則會 auto compute
+      if (nextDrawNoEl) nextDrawNoEl.value = next.drawNo || "";
+  
+      if (nextJackpotMEl && (nextJackpotMEl.value === "" || nextJackpotMEl.value == null)) {
+        if (next.jackpotM != null) nextJackpotMEl.value = String(next.jackpotM);
+      }
+  
+      updateJackpotHint();
+      // 如果未有 stored drawNo，就用最新 drawNo + 日期 auto 計
+      if (nextDrawNoEl && !nextDrawNoEl.value) computeNextDrawNo();
+    }
+  
+    // -------------------------
+    // Save next meta (independent)
+    // -------------------------
+    async function saveNextMetaOnly() {
+      const key = getAdminKey();
+      if (!key) {
+        setMsg(`<span class="error">請先輸入密碼（ADMIN_KEY），再按「記住密碼」。</span>`);
+        return;
+      }
+  
+      const drawDate = (nextDrawDateEl?.value || "").trim();
+      if (!drawDate) {
+        setMsg(`<span class="error">請先填「下期攪珠日期」。</span>`);
+        return;
+      }
+  
+      // nextDrawNo is readonly; if empty, compute again
+      if (nextDrawNoEl && !nextDrawNoEl.value) computeNextDrawNo();
+  
+      const drawNo = (nextDrawNoEl?.value || "").trim();
+      if (!drawNo) {
+        setMsg(`<span class="error">未能自動計算「下期期數」。請先確保已載入最新一期/或填「今期期數」再選下期日期。</span>`);
+        return;
+      }
+  
+      const jackpotM = nextJackpotMEl?.value ? parseInt(nextJackpotMEl.value, 10) : null;
+      const payload = {
+        next: {
+          drawDate,
+          drawNo,
+          jackpotM: Number.isFinite(jackpotM) ? jackpotM : 0,
+        },
+      };
+  
+      setMsg(`提交中（只更新下期資料）…`);
+  
+      const { res, data } = await fetchJsonNoStore("/api/admin/next", {
+        method: "PUT",
+        headers: {
+          authorization: "Bearer " + key,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+  
+      if (!res.ok || !data?.ok) {
+        setMsg(`<span class="error">失敗：${data?.error || ("HTTP " + res.status)}</span>`);
+        return;
+      }
+  
+      // refresh from server response
+      const next = data.next || payload.next;
+      if (nextDrawDateEl) nextDrawDateEl.value = next.drawDate || drawDate;
+      if (nextDrawNoEl) nextDrawNoEl.value = next.drawNo || drawNo;
+      if (nextJackpotMEl) nextJackpotMEl.value = String(next.jackpotM ?? jackpotM ?? "");
+      updateJackpotHint();
+  
+      setMsg(`<span class="ok">✅ 已更新下期資料（獨立）。</span>`);
+    }
+  
+    // -------------------------
+    // Draw result upsert (does NOT write next meta anymore)
+    // -------------------------
+    function validateDrawPayload(p) {
+      if (!p.drawNo) return "請填「今期期數」。";
+      if (!p.drawDate) return "請填「今期攪珠日期」。";
+      if (!Array.isArray(p.numbers) || p.numbers.length !== 6) return "正選號碼必須剛好 6 個。";
+      if (!Number.isFinite(p.special) || p.special < 1 || p.special > 49) return "特別號碼必須為 1–49。";
+      return null;
+    }
+  
+    async function submitDrawUpsert() {
+      const key = getAdminKey();
+      if (!key) {
+        setMsg(`<span class="error">請先輸入密碼（ADMIN_KEY），再按「記住密碼」。</span>`);
+        return;
+      }
+  
+      const payload = {
+        drawNo: (drawNoEl?.value || "").trim(),
+        drawDate: drawDateEl?.value || "",
+        numbers: parseNums(numsEl?.value || ""),
+        special: parseInt(specialEl?.value || "", 10),
+      };
+  
+      const err = validateDrawPayload(payload);
+      if (err) {
+        setMsg(`<span class="error">失敗：${err}</span>`);
+        return;
+      }
+  
+      setMsg("提交中（更新攪珠結果）…");
+  
+      const { res, data } = await fetchJsonNoStore("/api/admin/upsert", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Admin-Key": key,
+        },
+        body: JSON.stringify(payload),
+      });
+  
+      if (!res.ok) {
+        setMsg(`<span class="error">失敗：${data?.error || ("HTTP " + res.status)}</span>`);
+        return;
+      }
+  
+      // Upsert success: update lastDraw so next auto calc becomes consistent
+      lastDraw = { drawNo: payload.drawNo, drawDate: payload.drawDate };
+      drawNoTouched = true; // user updated it
+      computeNextDrawNo();
+  
+      setMsg(`<span class="ok">✅ 攪珠結果更新成功！</span>`);
+    }
+  
+    // -------------------------
+    // UI: add an independent "update next" button beside existing submit
+    // (no HTML changes needed)
+    // -------------------------
+    let submitNextBtn = null;
+    function ensureNextOnlyButton() {
+      if (!submitBtn || submitNextBtn) return;
+  
+      submitBtn.textContent = "提交攪珠結果";
+  
+      submitNextBtn = document.createElement("button");
+      submitNextBtn.id = "submitNextOnly";
+      submitNextBtn.type = "button";
+      submitNextBtn.textContent = "只更新下期資料";
+      submitNextBtn.style.marginLeft = "10px";
+  
+      submitBtn.insertAdjacentElement("afterend", submitNextBtn);
+  
+      submitNextBtn.addEventListener("click", async () => {
+        try {
+          await saveNextMetaOnly();
+        } catch (e) {
+          setMsg(`<span class="error">提交失敗：${e.message}</span>`);
+        }
+      });
+    }
+  
+    // Existing submit => draw upsert only
+    if (submitBtn) {
+      submitBtn.addEventListener("click", async () => {
+        try {
+          await submitDrawUpsert();
+        } catch (e) {
+          setMsg(`<span class="error">提交失敗：${e.message}</span>`);
+        }
+      });
+    }
+  
+    // -------------------------
+    // Init
+    // -------------------------
+    (async function init() {
+      ensureNextOnlyButton();
+      updateJackpotHint();
+  
+      await prefillLatestDraw();
+  
+      // Auto prefill drawNo for convenience (only if empty)
+      if (lastDraw?.drawNo && drawNoEl && !drawNoEl.value) {
+        const last = parseDrawNo(lastDraw.drawNo);
+        const lastYearByDate = yearFromYMD(lastDraw.drawDate);
+        const lastYearFull = Number.isFinite(lastYearByDate) ? lastYearByDate : (last ? last.yearFull : null);
+        const todayYearFull = new Date().getFullYear();
+  
+        if (last && lastYearFull === todayYearFull) {
+          drawNoEl.value = formatDrawNo(todayYearFull, last.seq + 1);
+        } else {
+          drawNoEl.value = formatDrawNo(todayYearFull, 1);
+        }
+  
+        if (prefillHintEl) {
+          prefillHintEl.textContent = `(已根據 DB 最新一期自動預填；如跨年，改「攪珠日期」會自動修正)`;
+        }
+      }
+  
+      // Now that lastDraw exists, compute next draw no if next date already selected
+      computeNextDrawNo();
+  
+      // Load stored next meta if key exists
+      try {
+        await loadNextMetaIfPossible();
+        computeNextDrawNo();
+      } catch (e) {
+        // ignore
+      }
+    })();
   </script>
+
 </body>
 </html>
