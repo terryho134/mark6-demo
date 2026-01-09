@@ -51,27 +51,28 @@
 
     <hr style="margin:14px 0;border:none;border-top:1px solid #eee;">
 
-    <h3 style="margin:0 0 8px;">同時更新下期資料</h3>
+    <h3 style="margin:0 0 8px;">下期資料（可獨立更新）</h3>
 
     <div class="row">
       <label>下期攪珠日期</label>
       <input id="nextDrawDate" type="date" />
     </div>
-
+    
     <div class="row" style="margin-top:10px;">
       <label>下期期數（自動）</label>
       <input id="nextDrawNo" readonly placeholder="會自動計算" />
       <span class="muted">同一年：+1；新一年：<code>001/新年份</code></span>
     </div>
-
+    
     <div class="row" style="margin-top:10px;">
       <label>估計頭獎基金（百萬位）</label>
       <input id="nextJackpotM" type="number" min="0" step="1" style="width:120px;" placeholder="例如 22" />
       <span class="muted" id="jackpotHint"></span>
     </div>
-
+    
     <div class="row" style="margin-top:14px;">
-      <button id="submit">提交更新</button>
+      <button id="submit">提交攪珠結果</button>
+      <button id="submitNextOnly" type="button">只更新下期資料</button>
     </div>
 
     <div id="msg" class="muted" style="margin-top:12px;"></div>
