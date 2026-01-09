@@ -1,4 +1,4 @@
-import { getDb } from "../_lib/edgeCache.js";
+import { getDb } from "../../_lib/edgeCache.js";
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
