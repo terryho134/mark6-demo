@@ -1,4 +1,3 @@
-// functions/api/admin/next.js
 import { getDb } from "../_lib/edgeCache.js";
 
 function json(data, status = 200) {
@@ -22,9 +21,9 @@ function requireAuth(request, env) {
 }
 
 async function readNext(db) {
-  const row = await db.prepare(
-    `SELECT value, updatedAt FROM site_meta WHERE key = 'nextDraw' LIMIT 1`
-  ).first();
+  const row = await db
+    .prepare(`SELECT value, updatedAt FROM site_meta WHERE key='nextDraw' LIMIT 1`)
+    .first();
 
   if (!row) return { next: null, updatedAt: null };
 
@@ -50,7 +49,7 @@ export async function onRequest({ request, env }) {
   const db = getDb(env);
   if (!db) return json({ ok: false, error: "D1 binding not found" }, 500);
 
-  // ✅ Admin endpoint：GET/PUT 都要 token
+  // 管理員 API：GET/PUT 都要 token
   if (!requireAuth(request, env)) return unauthorized();
 
   if (request.method === "GET") {
@@ -60,14 +59,10 @@ export async function onRequest({ request, env }) {
 
   if (request.method === "PUT") {
     let body;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ ok: false, error: "Invalid JSON body" }, 400);
-    }
+    try { body = await request.json(); }
+    catch { return json({ ok: false, error: "Invalid JSON body" }, 400); }
 
-    // 你可以自行定義 next 內容（保持彈性）
-    // 建議至少：drawNo / drawDate / closeTime / jackpot / note
+    // 允許 {next:{...}} 或直接 {...}
     const next = body?.next ?? body;
 
     const { updatedAt } = await upsertNext(db, next);
