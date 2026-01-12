@@ -1,3 +1,4 @@
+// next.js
 import { getDb } from "../../_lib/edgeCache.js";
 
 function json(data, status = 200) {
@@ -42,7 +43,9 @@ async function readNext(db) {
   if (!row) return { next: null, updatedAt: null };
 
   let next = null;
-  try { next = JSON.parse(row.value); } catch {}
+  try {
+    next = JSON.parse(row.value);
+  } catch {}
   return { next, updatedAt: row.updatedAt };
 }
 
@@ -73,13 +76,15 @@ function normalizeNext(next) {
     ? next.note.trim()
     : "下期資料以官方公佈為準";
 
-  // If essential fields missing, still store but caller may validate
   return {
     drawNo: drawNo || null,
     drawDate: drawDate || null,
     jackpotMillion,
     jackpotAmount,
     note,
+    // keep optional fields if you want
+    stopSellingTime: next.stopSellingTime ?? null,
+    source: next.source ?? null,
   };
 }
 
@@ -96,6 +101,19 @@ async function upsertNext(db, nextObj) {
   return { updatedAt: now };
 }
 
+// ✅ Phase 2：成功寫入後 purge /api/latest 的 edge cache
+async function purgeLatestCache(request) {
+  try {
+    const cache = caches.default;
+    const origin = new URL(request.url).origin;
+    const key = new Request(origin + "/api/latest", { method: "GET" });
+    await cache.delete(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function onRequest({ request, env }) {
   const db = getDb(env);
   if (!db) return json({ ok: false, error: "D1 binding not found" }, 500);
@@ -110,20 +128,27 @@ export async function onRequest({ request, env }) {
 
   if (request.method === "PUT") {
     let body;
-    try { body = await request.json(); }
-    catch { return json({ ok: false, error: "Invalid JSON body" }, 400); }
+    try {
+      body = await request.json();
+    } catch {
+      return json({ ok: false, error: "Invalid JSON body" }, 400);
+    }
 
     // allow {next:{...}} or direct {...}
     const rawNext = body?.next ?? body;
     const next = normalizeNext(rawNext);
 
-    // validate minimal required fields (so you won't silently store garbage)
+    // validate minimal required fields
     if (!next?.drawNo || !next?.drawDate) {
       return json({ ok: false, error: "Missing next.drawNo / next.drawDate" }, 400);
     }
 
     const { updatedAt } = await upsertNext(db, next);
-    return json({ ok: true, next, updatedAt });
+
+    // ✅ Phase 2：purge /api/latest edge cache
+    const purged = await purgeLatestCache(request);
+
+    return json({ ok: true, next, updatedAt, cachePurged: purged });
   }
 
   return json({ ok: false, error: "Method not allowed" }, 405);
