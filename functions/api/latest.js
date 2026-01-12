@@ -1,135 +1,110 @@
-async function getMeta(env, key) {
+// /functions/api/latest.js  (或你實際 latest.js 路徑)
+// Phase 2: Edge cache for /api/latest using caches.default
+
+async function getSiteMeta(env, key) {
   const row = await env.DB
-    .prepare("SELECT value FROM meta WHERE key = ? LIMIT 1")
+    .prepare("SELECT value FROM site_meta WHERE key = ? LIMIT 1")
     .bind(key)
     .first();
   return row?.value ?? null;
 }
 
-// 新：讀 site_meta 的 nextDraw（JSON）
-// 如果 site_meta 表未存在 / key 未寫入，會安全 fallback
-async function getNextDrawFromSiteMeta(env) {
-  try {
-    const row = await env.DB
-      .prepare("SELECT value, updatedAt FROM site_meta WHERE key = 'nextDraw' LIMIT 1")
-      .first();
+function jsonResponse(payload, extraHeaders = {}) {
+  return new Response(JSON.stringify(payload), {
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      // 重要：Cache API 會跟呢個 max-age 去做 expiry
+      "cache-control": "public, max-age=120",
+      ...extraHeaders,
+    },
+  });
+}
 
-    if (!row?.value) return { next: null, updatedAt: null };
+export async function onRequest({ request, env, waitUntil }) {
+  const cache = caches.default;
 
-    let obj = null;
-    try {
-      obj = JSON.parse(row.value);
-    } catch {
-      obj = null;
-    }
-    if (!obj || typeof obj !== "object") return { next: null, updatedAt: row.updatedAt ?? null };
+  // ✅ 統一 cache key：忽略 ?v=xxx / ?__ts=xxx
+  const url = new URL(request.url);
+  url.search = "";
+  const cacheKey = new Request(url.toString(), { method: "GET" });
 
-    // 兼容：jackpotM（新）/ jackpotMillion（舊）
-    const jackpotM =
-      Number.isFinite(Number(obj.jackpotM)) ? parseInt(obj.jackpotM, 10) :
-      Number.isFinite(Number(obj.jackpotMillion)) ? parseInt(obj.jackpotMillion, 10) :
-      null;
-
-    const next = {
-      drawNo: obj.drawNo ?? null,
-      drawDate: obj.drawDate ?? null,
-      jackpotM: Number.isFinite(jackpotM) ? jackpotM : null,
-    };
-
-    // 如果三個都無，就當無資料
-    if (!next.drawNo && !next.drawDate && next.jackpotM === null) {
-      return { next: null, updatedAt: row.updatedAt ?? null };
-    }
-
-    return { next, updatedAt: row.updatedAt ?? null };
-  } catch (e) {
-    // 最常見：site_meta 表未建立 / 欄位不同
-    return { next: null, updatedAt: null };
+  // 1) 先試 cache
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const res = new Response(cached.body, cached);
+    res.headers.set("x-edge-cache", "HIT");
+    return res;
   }
-}
 
-function parseNumbersField(s) {
-  // numbers 欄理論上係 JSON array string，例如 "[1,2,3,4,5,6]"
-  // 但做個容錯：萬一係 "1 2 3 4 5 6" 都盡量 parse 到
-  if (s == null) return [];
-  if (Array.isArray(s)) return s.map(Number).filter(n => Number.isFinite(n));
-
-  const str = String(s).trim();
-  if (!str) return [];
-
-  try {
-    const j = JSON.parse(str);
-    if (Array.isArray(j)) return j.map(Number).filter(n => Number.isFinite(n));
-  } catch {}
-
-  // fallback: split by non-digit
-  return str
-    .split(/[^0-9]+/)
-    .filter(Boolean)
-    .map(x => parseInt(x, 10))
-    .filter(n => Number.isFinite(n));
-}
-
-export async function onRequest({ env }) {
+  // 2) cache miss → 讀 D1
   const now = new Date().toISOString();
 
-  // ✅ 最新一期：draws 表（照舊，但加 drawNo 作 tie-break）
   const latestRow = await env.DB
     .prepare(
-      "SELECT drawNo, drawDate, numbers, special, updatedAt FROM draws ORDER BY drawDate DESC, drawNo DESC LIMIT 1"
+      "SELECT drawNo, drawDate, numbers, special, updatedAt FROM draws ORDER BY drawDate DESC LIMIT 1"
     )
     .first();
 
+  const nextDrawRow = await env.DB
+    .prepare("SELECT value, updatedAt FROM site_meta WHERE key='nextDraw' LIMIT 1")
+    .first();
+
+  // 最新一期
   const draw = latestRow
     ? {
         drawNo: latestRow.drawNo,
         drawDate: latestRow.drawDate,
-        numbers: parseNumbersField(latestRow.numbers),
+        numbers: JSON.parse(latestRow.numbers),
         special: Number(latestRow.special),
       }
     : null;
 
-  // ✅ 下期資料：優先讀 site_meta.nextDraw（新），否則 fallback meta 三 key（舊）
-  const { next: nextFromSiteMeta } = await getNextDrawFromSiteMeta(env);
-
-  let nextDrawNo = null;
-  let nextDrawDate = null;
-  let jackpotM = null;
-
-  if (nextFromSiteMeta) {
-    nextDrawNo = nextFromSiteMeta.drawNo ?? null;
-    nextDrawDate = nextFromSiteMeta.drawDate ?? null;
-    jackpotM = Number.isFinite(nextFromSiteMeta.jackpotM) ? nextFromSiteMeta.jackpotM : null;
-  } else {
-    // 舊 meta
-    nextDrawDate = await getMeta(env, "nextDrawDate");
-    nextDrawNo = await getMeta(env, "nextDrawNo");
-    const nextJackpotM = await getMeta(env, "nextJackpotM"); // 百萬位（文字）
-    jackpotM = nextJackpotM !== null ? parseInt(nextJackpotM, 10) : null;
-    jackpotM = Number.isFinite(jackpotM) ? jackpotM : null;
+  // 下期（由 next-cron / admin/next 寫入 site_meta.nextDraw）
+  let nextDraw = null;
+  if (nextDrawRow?.value) {
+    try {
+      const nd = JSON.parse(nextDrawRow.value);
+      // 你前台用既格式：jackpotMillion / jackpotAmount / note
+      const jackpotM = nd?.jackpotM ?? null;
+      nextDraw = {
+        drawNo: nd?.drawNo ?? null,
+        drawDate: nd?.drawDate ?? null,
+        jackpotMillion: Number.isFinite(Number(jackpotM)) ? Number(jackpotM) : null,
+        jackpotAmount:
+          Number.isFinite(Number(jackpotM)) ? Number(jackpotM) * 1_000_000 : null,
+        note: "下期資料以官方公佈為準",
+        // 可選：保留 stopSellingTime / source 俾 debug
+        stopSellingTime: nd?.stopSellingTime ?? null,
+        source: nd?.source ?? null,
+      };
+    } catch {
+      // ignore parse error
+    }
   }
-
-  const jackpotAmount = Number.isFinite(jackpotM) ? jackpotM * 1_000_000 : null;
 
   const payload = {
     source: "d1",
-    // 保持你原本寫法：用 now 作 updatedAt（避免同時要 reconcile 多個 updatedAt）
+    // ✅ 建議：updatedAt 用「生成時間」ok；如你想更準，可改成 max(latestRow.updatedAt, nextDrawRow.updatedAt)
     updatedAt: now,
     draw,
-    nextDraw: {
-      drawNo: nextDrawNo,
-      drawDate: nextDrawDate,
-      jackpotMillion: Number.isFinite(jackpotM) ? jackpotM : null,
-      jackpotAmount: jackpotAmount,
+    nextDraw: nextDraw || {
+      drawNo: null,
+      drawDate: null,
+      jackpotMillion: null,
+      jackpotAmount: null,
       note: "下期資料以官方公佈為準",
     },
     disclaimer: "本頁資料僅供參考，以官方公佈為準。",
   };
 
-  return new Response(JSON.stringify(payload), {
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-    },
+  const res = jsonResponse(payload, {
+    "x-edge-cache": "MISS",
   });
+
+  // 3) 寫入 edge cache（非阻塞）
+  const putPromise = cache.put(cacheKey, res.clone());
+  if (typeof waitUntil === "function") waitUntil(putPromise);
+  else await putPromise;
+
+  return res;
 }
