@@ -90,10 +90,7 @@
     const resp = await fetch(`/api/stats?n=${n}`, { cache: "no-store" });
     const data = await resp.json();
 
-    // Backward compatible: stats.js returns { picker: {...} } in our modified version.
-    // If picker exists, use it. Otherwise fallback to old/unknown.
     const p = data && data.picker ? data.picker : data;
-
     if (!p || !p.ok) throw new Error((p && p.error) ? p.error : "Failed to load stats");
 
     const top10 = p.top10 || [];
@@ -129,17 +126,28 @@
     showToast._t = setTimeout(() => toast.classList.add("hidden"), 2200);
   }
 
-  function setOptions(select, values, keepIfPossible = true) {
+  // Support labeled options
+  function setOptions2(select, items, keepIfPossible = true) {
     const cur = select.value;
     select.innerHTML = "";
-    for (const v of values) {
+    for (const it of items) {
+      const value = (typeof it === "object") ? String(it.value) : String(it);
+      const label = (typeof it === "object") ? String(it.label) : String(it);
       const opt = document.createElement("option");
-      opt.value = String(v);
-      opt.textContent = String(v);
+      opt.value = value;
+      opt.textContent = label;
       select.appendChild(opt);
     }
-    if (keepIfPossible && values.map(String).includes(cur)) select.value = cur;
-    else select.value = String(values[0] ?? "");
+    if (keepIfPossible && items.map(x => String(typeof x === "object" ? x.value : x)).includes(cur)) {
+      select.value = cur;
+    } else {
+      const firstVal = (items[0] && typeof items[0] === "object") ? String(items[0].value) : String(items[0] ?? "");
+      select.value = firstVal;
+    }
+  }
+
+  function withOff(values, offLabel = "Off") {
+    return [{ value: "", label: offLabel }, ...values.map(v => ({ value: v, label: String(v) }))];
   }
 
   function isAdvancedBuyMode(mode) {
@@ -249,6 +257,55 @@
     return 10;
   }
 
+  // ---------- Basic: dynamic options ----------
+  function initBasicSelectOptions() {
+    // 複式：7–15
+    setOptions2(multiN, Array.from({ length: 9 }, (_, i) => 7 + i));
+
+    // 膽：1–5（六合彩最多 5 膽）
+    setOptions2(danN, [1, 2, 3, 4, 5]);
+
+    // 拖：由 danN 決定（並加入全餐）
+    updateTuoOptions();
+  }
+
+  function updateTuoOptions() {
+    const d = Number(danN.value || 1);
+
+    // 最少拖數一般為 6-d；但你指定：選 5 膽要有 2 腳選項
+    const minTuo = (d === 5) ? 2 : (6 - d);
+    const maxTuo = 49 - d;
+
+    // 生成 options：由 min 開始列一段，再加幾個常用，最後加全餐
+    const opts = [];
+    const startEnd = Math.min(minTuo + 12, maxTuo);
+    for (let t = minTuo; t <= startEnd; t++) opts.push({ value: t, label: String(t) });
+
+    // 常用跳點（避免 dropdown 太長）
+    const jumps = [15, 20, 25, 30, 35, 40];
+    for (const j of jumps) {
+      if (j >= minTuo && j <= maxTuo && !opts.some(o => o.value === j)) {
+        opts.push({ value: j, label: String(j) });
+      }
+    }
+
+    if (!opts.some(o => o.value === maxTuo)) {
+      opts.push({ value: maxTuo, label: `${maxTuo}（全餐）` });
+    } else {
+      // 如果 maxTuo 已在前段範圍內，就替換成「全餐」label
+      const idx = opts.findIndex(o => o.value === maxTuo);
+      opts[idx] = { value: maxTuo, label: `${maxTuo}（全餐）` };
+    }
+
+    // 盡量保留原本選擇
+    setOptions2(tuoN, opts, true);
+
+    // 如果原本值太細（例如由 2 膽轉去 5 膽），就自動拉返去 min
+    const cur = Number(tuoN.value || minTuo);
+    if (cur < minTuo) tuoN.value = String(minTuo);
+    if (cur > maxTuo) tuoN.value = String(maxTuo);
+  }
+
   function updateSetCountOptions() {
     const issues = hardConflicts();
 
@@ -281,14 +338,14 @@
 
     if (isAdvancedBuyMode(buyMode.value)) {
       setCount.disabled = true;
-      setOptions(setCount, [1]);
+      setOptions2(setCount, [1]);
       setCountHint.textContent = "進階買法：每次只生成 1 套注單。";
       limitHint.textContent = "進階買法：固定只可生成 1 套。";
     } else {
       setCount.disabled = false;
       const opts = [];
       for (let i = 1; i <= Math.min(10, maxAllowed); i++) opts.push(i);
-      setOptions(setCount, opts);
+      setOptions2(setCount, opts);
 
       if (!anyAdvancedSelected()) {
         setCountHint.textContent = "未啟用條件：純隨機，可生成 1–10 組。";
@@ -355,7 +412,7 @@
     return Math.round(num / den);
   }
 
-  // ---------- Generator ----------
+  // ---------- Generator helpers ----------
   function sample6() {
     const pool = Array.from({ length: 49 }, (_, i) => i + 1);
     shuffle(pool);
@@ -579,9 +636,9 @@
       let bets = [];
 
       if (mode === "full9") {
-        bets = buildPack9();     // ✅ fixed rule
+        bets = buildPack9();
       } else if (mode === "full17") {
-        bets = buildPack17();    // ✅ fixed rule
+        bets = buildPack17();
       } else if (mode === "full5dan") {
         bets = buildPack5dan();
       }
@@ -601,10 +658,6 @@
 
   // ---------- 9注/17注全餐：正確規則 + 驗證 ----------
   function buildPack9() {
-    // Rule:
-    // 1) Bets 1-8: 48 numbers no-repeat across these 8 bets
-    // 2) Bet 9: the remaining 1 number + 5 numbers chosen from the 48 (duplicates)
-    // Result distribution: 44 numbers appear once, 5 numbers appear twice.
     const pool = Array.from({ length: 49 }, (_, i) => i + 1);
     shuffle(pool);
 
@@ -622,23 +675,12 @@
 
     bets.push([x, ...R5].sort((a, b) => a - b));
 
-    // Validate (safety)
-    if (!validatePack9(bets)) {
-      // extremely unlikely unless bug; regenerate recursively
-      return buildPack9();
-    }
+    if (!validatePack9(bets)) return buildPack9();
     return bets;
   }
 
   function buildPack17() {
-    // Confirmed rule (your final spec):
-    // - First 8 bets: 48 numbers no-repeat
-    // - Bet 9: remaining x + 5 numbers (R5) chosen from first 48 (duplicates)
-    // - Bets 10-16: choose 42 numbers from the 44 "appear-once" numbers (i.e. exclude R5),
-    //              distribute into 7 bets of 6 (no repeats), leaving L2 (2 numbers) still once.
-    // - Bet 17: L2 + 4 numbers randomly selected from the other 47 numbers (exclude L2).
-    // Result distribution: 45 numbers appear twice, 4 numbers appear three times.
-    const MAX_TRY = 200; // local retries for safety
+    const MAX_TRY = 200;
     for (let attempt = 0; attempt < MAX_TRY; attempt++) {
       const pool = Array.from({ length: 49 }, (_, i) => i + 1);
       shuffle(pool);
@@ -646,58 +688,44 @@
       const A48 = pool.slice(0, 48);
       const x = pool[48];
 
-      // Bets 1-8
       const bets = [];
       for (let i = 0; i < 8; i++) {
         bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
       }
 
-      // Choose R5 from A48
       const tmp = [...A48];
       shuffle(tmp);
       const R5 = tmp.slice(0, 5);
       const R5set = new Set(R5);
 
-      // Bet 9 = x + R5
       bets.push([x, ...R5].sort((a, b) => a - b));
 
-      // The 44 "appear-once after 9 bets" numbers are U \ R5
       const U49 = Array.from({ length: 49 }, (_, i) => i + 1);
-      const S44 = U49.filter((n) => !R5set.has(n)); // size 44
+      const S44 = U49.filter((n) => !R5set.has(n)); // exclude R5
 
-      // Pick T42 from S44 for bets 10-16
       const sTmp = [...S44];
       shuffle(sTmp);
       const T42 = sTmp.slice(0, 42);
-      const L2 = sTmp.slice(42); // exactly 2
+      const L2 = sTmp.slice(42); // 2 numbers
 
-      // Bets 10-16: chunk T42 into 7 bets
       for (let i = 0; i < 7; i++) {
         bets.push(T42.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
       }
 
-      // Bet 17: L2 + 4 from other 47 numbers (exclude L2)
       const L2set = new Set(L2);
-      const rest47 = U49.filter((n) => !L2set.has(n)); // size 47
+      const rest47 = U49.filter((n) => !L2set.has(n));
       shuffle(rest47);
       const pick4 = rest47.slice(0, 4);
 
       bets.push([...L2, ...pick4].sort((a, b) => a - b));
 
-      // Validate distribution AND the key constraint:
-      // bets 10-16 must NOT include any R5 number.
       if (!validatePack17(bets, R5set)) continue;
-
       return bets;
     }
-
-    // If somehow failed all tries, fall back to a deterministic safe rebuild
     return buildPack17Fallback();
   }
 
   function buildPack17Fallback() {
-    // Deterministic-style safe fallback (still random but more constrained):
-    // Force selection paths that always satisfy the rule.
     while (true) {
       const pool = Array.from({ length: 49 }, (_, i) => i + 1);
       shuffle(pool);
@@ -722,7 +750,7 @@
       shuffle(S44);
 
       const T42 = S44.slice(0, 42);
-      const L2 = S44.slice(42); // 2 numbers
+      const L2 = S44.slice(42);
 
       for (let i = 0; i < 7; i++) {
         bets.push(T42.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
@@ -757,7 +785,6 @@
       else if (cnt[i] === 2) twos++;
       else other++;
     }
-    // Expect: 44 numbers appear once, 5 numbers appear twice
     return ones === 44 && twos === 5 && other === 0;
   }
 
@@ -765,7 +792,6 @@
     if (!Array.isArray(bets) || bets.length !== 17) return false;
     const cnt = Array(50).fill(0);
 
-    // Basic shape validation
     for (const b of bets) {
       if (!Array.isArray(b) || b.length !== 6) return false;
       const s = new Set(b);
@@ -776,8 +802,7 @@
       }
     }
 
-    // Key rule: bets 10-16 must not include R5 numbers
-    // index: 0..16 => bets10-16 are indices 9..15
+    // bets 10-16 indices 9..15 must not include R5
     if (R5set && typeof R5set.has === "function") {
       for (let i = 9; i <= 15; i++) {
         for (const n of bets[i]) {
@@ -786,8 +811,6 @@
       }
     }
 
-    // Distribution validation:
-    // Expect: 45 numbers appear twice, 4 numbers appear three times
     let twos = 0, threes = 0, other = 0;
     for (let i = 1; i <= 49; i++) {
       if (cnt[i] === 2) twos++;
@@ -798,20 +821,15 @@
   }
 
   function buildPack5dan() {
-    // MVP representation:
-    // pick 5 dan; then for each of remaining 44 numbers make a bet (dan + that leg) => 44 bets
     const pool = Array.from({ length: 49 }, (_, i) => i + 1);
     shuffle(pool);
     const dan = pool.slice(0, 5).sort((a, c) => a - c);
-    const legs = pool.slice(5).sort((a, c) => a - c); // 44
-    const bets = legs.map((x) => [...dan, x].sort((a, c) => a - c));
-    return bets;
+    const legs = pool.slice(5).sort((a, c) => a - c);
+    return legs.map((x) => [...dan, x].sort((a, c) => a - c));
   }
 
   // ---------- Render ----------
-  function clearResult() {
-    result.innerHTML = "";
-  }
+  function clearResult() { result.innerHTML = ""; }
 
   function renderNormal(sets, meta) {
     clearResult();
@@ -946,6 +964,11 @@
     }[c]));
   }
 
+  function onClear() {
+    clearResult();
+    showToast("已清空");
+  }
+
   // ---------- Events ----------
   const inputs = [
     buyMode, setCount, multiN, danN, tuoN,
@@ -956,10 +979,31 @@
   ];
   inputs.forEach((x) => x.addEventListener("change", updateSetCountOptions));
 
-  btnGenerate.addEventListener("click", onGenerate);
-  btnClear.addEventListener("click", () => { clearResult(); showToast("已清空"); });
+  // dan -> update tuo options immediately
+  danN.addEventListener("change", () => {
+    updateTuoOptions();
+    updateSetCountOptions();
+  });
 
-  // init
-  setOptions(setCount, Array.from({ length: 10 }, (_, i) => i + 1));
+  buyMode.addEventListener("change", () => {
+    // switching mode might show danTuo box; ensure tuo options up-to-date
+    if (buyMode.value === "danTuo") updateTuoOptions();
+    updateSetCountOptions();
+  });
+
+  btnGenerate.addEventListener("click", onGenerate);
+  btnClear.addEventListener("click", onClear);
+
+  // ---------- init ----------
+  // Advanced: remove "最多1" => only Off / 2 / 3
+  setOptions2(maxConsec, withOff([2, 3], "Off"), true);
+  setOptions2(maxTail, withOff([2, 3], "Off"), true);
+
+  // Basic selects
+  initBasicSelectOptions();
+
+  // setCount default options (1..10)
+  setOptions2(setCount, Array.from({ length: 10 }, (_, i) => i + 1), true);
+
   updateSetCountOptions();
 })();
