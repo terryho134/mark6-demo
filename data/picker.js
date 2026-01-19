@@ -83,6 +83,7 @@
 
   // ---------- Stats cache ----------
   const statsCache = new Map();
+
   async function getStats(n) {
     if (statsCache.has(n)) return statsCache.get(n);
 
@@ -99,6 +100,12 @@
     const topSet = new Set(top10.map((x) => x.n));
     const bottomSet = new Set(bottom10.map((x) => x.n));
 
+    // freq: [{n,c}] -> map for fast lookup
+    const freqMap = new Map();
+    (p.freq || []).forEach((x) => {
+      if (x && Number.isInteger(x.n)) freqMap.set(x.n, Number(x.c) || 0);
+    });
+
     const pack = {
       n: p.n || n,
       top10,
@@ -106,6 +113,7 @@
       topSet,
       bottomSet,
       freq: p.freq || [],
+      freqMap,
       lastDraw: p.lastDraw || null,
     };
 
@@ -147,7 +155,7 @@
     return [{ value: "", label: offLabel }, ...values.map(v => ({ value: v, label: String(v) }))];
   }
 
-  // ✅ 只有 9/17 全餐仍屬「進階買法」固定 1 套
+  // ✅ 只有 9/17 全餐屬「進階買法」固定 1 套
   function isAdvancedBuyMode(mode) {
     return mode === "full9" || mode === "full17";
   }
@@ -395,7 +403,6 @@
     } else if (mode === "full17") {
       buyModeHint.textContent = "17注全餐：1 套 17 注（$170）";
     } else if (mode === "full5dan") {
-      // ✅ 改為基本買法：可多組
       const per = 44 * PRICE_PER_BET; // 44注
       buyModeHint.textContent = `5 膽全餐：每組 44 注（$${per}）`;
       danTuoCostHint.textContent = setCount.disabled ? "" : `${sets}組總額：$${per * sets}`;
@@ -440,10 +447,113 @@
     return best;
   }
 
+  function consecutiveSegments(sortedNums) {
+    // count of consecutive runs with length >= 2
+    if (!sortedNums || sortedNums.length < 2) return 0;
+    let seg = 0;
+    let run = 1;
+    for (let i = 1; i < sortedNums.length; i++) {
+      if (sortedNums[i] === sortedNums[i - 1] + 1) run++;
+      else {
+        if (run >= 2) seg++;
+        run = 1;
+      }
+    }
+    if (run >= 2) seg++;
+    return seg;
+  }
+
   function countsBy(items) {
     const m = new Map();
     for (const x of items) m.set(x, (m.get(x) || 0) + 1);
     return m;
+  }
+
+  function isPrime(n) {
+    if (n <= 1) return false;
+    if (n === 2) return true;
+    if (n % 2 === 0) return false;
+    for (let i = 3; i * i <= n; i += 2) {
+      if (n % i === 0) return false;
+    }
+    return true;
+  }
+
+  function fmt1(x) {
+    return (Math.round(x * 10) / 10).toFixed(1);
+  }
+
+  // ---------- Explain (v2.1) ----------
+  function explainNums(numsSorted, statsPack = null) {
+    const len = numsSorted.length;
+    const sum = numsSorted.reduce((a, b) => a + b, 0);
+    const avg = sum / len;
+
+    const odd = numsSorted.filter((x) => x % 2 === 1).length;
+    const even = len - odd;
+
+    const big = numsSorted.filter((x) => x >= 25).length;
+    const small = len - big;
+
+    const cols = numsSorted.map(colorOf);
+    const cm = countsBy(cols);
+    const red = cm.get("red") || 0;
+    const blue = cm.get("blue") || 0;
+    const green = cm.get("green") || 0;
+
+    const runMax = maxConsecutiveRun(numsSorted);
+    const segs = consecutiveSegments(numsSorted);
+
+    const tails = numsSorted.map((x) => x % 10);
+    const tm = countsBy(tails);
+    let tailMax = 0;
+    let tailRep = null;
+    for (const [k, v] of tm.entries()) {
+      if (v > tailMax) { tailMax = v; tailRep = k; }
+    }
+
+    const groups = numsSorted.map(tensGroupOf);
+    const gm = countsBy(groups);
+    let groupMax = 0;
+    let groupRep = null;
+    for (const [k, v] of gm.entries()) {
+      if (v > groupMax) { groupMax = v; groupRep = k; }
+    }
+
+    const span = numsSorted[len - 1] - numsSorted[0];
+    const primes = numsSorted.filter(isPrime).length;
+
+    // optional: near N stats (only if we have statsPack)
+    let statLine = null;
+    if (statsPack && statsPack.freqMap) {
+      let score = 0;
+      for (const n of numsSorted) score += (statsPack.freqMap.get(n) || 0);
+      const scoreAvg = score / len;
+
+      const hotHit = numsSorted.filter((x) => statsPack.topSet && statsPack.topSet.has(x)).length;
+      const coldHit = numsSorted.filter((x) => statsPack.bottomSet && statsPack.bottomSet.has(x)).length;
+
+      statLine = `近${statsPack.n}期：出現次數總和 ${score}｜平均 ${fmt1(scoreAvg)}｜Top10命中${hotHit}｜Bottom10命中${coldHit}`;
+    }
+
+    const summary =
+      `奇偶 ${odd}/${even}｜大小 ${big}大${small}細｜顏色 紅${red}藍${blue}綠${green}` +
+      `｜連號 最長${runMax}（段數${segs}）｜同尾 最大${tailMax}` +
+      `｜十位段 最大${groupMax}｜平均 ${fmt1(avg)}（總和${sum}）`;
+
+    const chips = [
+      `連號：最長${runMax}｜段數${segs}`,
+      `尾：最大${tailMax}${tailRep !== null && tailMax >= 2 ? `（尾${tailRep}×${tailMax}）` : ""}`,
+      `段：最大${groupMax}${groupRep ? `（${groupRep}×${groupMax}）` : ""}`,
+      `色：紅${red} 藍${blue} 綠${green}`,
+      `和值：${sum}｜均值：${fmt1(avg)}`,
+      `跨度：${numsSorted[len - 1]}−${numsSorted[0]}=${span}`,
+      `質數：${primes}粒`,
+    ];
+
+    if (statLine) chips.push(statLine);
+
+    return { summary, chips };
   }
 
   // ---------- Constraints ----------
@@ -516,57 +626,6 @@
     return true;
   }
 
-  function buildTags(numsSorted, statsPack) {
-    const tags = [];
-
-    if (maxConsec.value) tags.push(`連號≤${maxConsec.value}（實際${maxConsecutiveRun(numsSorted)}）`);
-
-    if (avoidAllOddEven.checked) {
-      const odd = numsSorted.filter((x) => x % 2 === 1).length;
-      tags.push(`奇偶：${odd}單${numsSorted.length - odd}雙（避免全單/全雙）`);
-    }
-
-    if (maxTail.value) {
-      const tails = numsSorted.map((x) => x % 10);
-      const m = countsBy(tails);
-      const maxV = Math.max(...m.values());
-      tags.push(`同尾≤${maxTail.value}（實際最大${maxV}）`);
-    }
-
-    if (maxTensGroup.value) {
-      const groups = numsSorted.map(tensGroupOf);
-      const gm = countsBy(groups);
-      const most = Math.max(...gm.values());
-      tags.push(`十位段≤${maxTensGroup.value}（最集中${most}）`);
-    }
-
-    const cols = numsSorted.map(colorOf);
-    const cm = countsBy(cols);
-    const red = cm.get("red") || 0;
-    const blue = cm.get("blue") || 0;
-    const green = cm.get("green") || 0;
-
-    if (maxColor.value || eachColorAtLeast1.checked || avoidColor.value) {
-      tags.push(`顏色：紅×${red} 藍×${blue} 綠×${green}`);
-    }
-    if (eachColorAtLeast1.checked) tags.push("每色≥1 ✅");
-    if (maxColor.value) tags.push(`同色≤${maxColor.value} ✅`);
-    if (avoidColor.value) tags.push(`避開${avoidColor.value === "red" ? "紅" : avoidColor.value === "blue" ? "藍" : "綠"}色 ✅`);
-
-    const sum = numsSorted.reduce((a, b) => a + b, 0);
-    const pivot = AVG * numsSorted.length;
-    if (sumHigh.checked) tags.push(`平均>${AVG} ✅（總和${sum}）`);
-    if (sumLow.checked) tags.push(`平均<${AVG} ✅（總和${sum}）`);
-
-    if (statsPack && (hotMin.value || hotMax.value || coldMin.value || coldMax.value)) {
-      const hotHit = numsSorted.filter((x) => statsPack.topSet.has(x)).length;
-      const coldHit = numsSorted.filter((x) => statsPack.bottomSet.has(x)).length;
-      tags.push(`近${statsPack.n}期：Top10命中${hotHit}，Bottom10命中${coldHit}`);
-    }
-
-    return tags;
-  }
-
   // ---------- Ticket generators ----------
   function buildTicketByMode(mode) {
     if (mode === "single") {
@@ -590,14 +649,14 @@
       return { kind: "danTuo", dan, tuo, all, keyNums: all };
     }
 
-    // ✅ 5膽全餐：基本買法 -> 生成「膽 + 腳」，組與組多樣性用「膽」去衡量
+    // ✅ 5膽全餐：基本買法 -> 生成「膽 + 腳」，組與組多樣性以「膽」衡量
     if (mode === "full5dan") {
       const dan = sampleDistinct(5);
       const danSet = new Set(dan);
       const legs = [];
       for (let i = 1; i <= 49; i++) if (!danSet.has(i)) legs.push(i);
       const all = [...dan, ...legs].sort((a, b) => a - b);
-      return { kind: "full5dan", dan, legs, all, keyNums: dan }; // keyNums = dan
+      return { kind: "full5dan", dan, legs, all, keyNums: dan };
     }
 
     // fallback
@@ -615,8 +674,13 @@
     const target = Math.min(desiredSets, maxAllowed);
 
     let statsPack = null;
+    // if any Advanced 2 is used, fetch stats for explanation + constraints
     if (strict && (hotMin.value || hotMax.value || coldMin.value || coldMax.value)) {
       statsPack = await getStats(Number(statN.value));
+    } else if (statN && statN.value && N_ALLOWED.includes(Number(statN.value))) {
+      // Optional: if stats already loaded previously, keep it for explanation (non-blocking)
+      const n = Number(statN.value);
+      if (statsCache.has(n)) statsPack = statsCache.get(n);
     }
 
     const overlapK = overlapMax.value === "" ? null : Number(overlapMax.value);
@@ -632,7 +696,8 @@
       const numsSorted = (t.keyNums || []).slice().sort((a, b) => a - b);
 
       if (strict) {
-        // ✅ full5dan：條件判斷同 tags 都套用「膽」(keyNums)
+        // ✅ full5dan：條件判斷以「膽」(keyNums) / 或 all 規則？（目前保持 keyNums）
+        // 若你之後想條件套用到全 49（膽+腳），我可以再調整
         if (!checkAdvancedConstraints(numsSorted, statsPack)) continue;
 
         if (overlapK !== null) {
@@ -666,6 +731,9 @@
     let statsPack = null;
     if (strict && (hotMin.value || hotMax.value || coldMin.value || coldMax.value)) {
       statsPack = await getStats(Number(statN.value));
+    } else if (statN && statN.value && N_ALLOWED.includes(Number(statN.value))) {
+      const n = Number(statN.value);
+      if (statsCache.has(n)) statsPack = statsCache.get(n);
     }
 
     const PACK_ATTEMPT_LIMIT = 4000;
@@ -797,7 +865,7 @@
   // ---------- Render ----------
   function clearResult() { result.innerHTML = ""; }
 
-  // ✅ 顯示顏色：用 ring（唔破壞你原本 ball 風格）
+  // ✅ 顯示顏色：用 ring（唔破壞 ball 風格）
   function renderBallsRow(nums, labelText = "") {
     const COLOR_HEX = {
       red: "#ef4444",
@@ -836,11 +904,20 @@
     return wrap;
   }
 
-  function renderTags(tags) {
-    if (!tags || !tags.length) return null;
+  function renderSummaryLine(text) {
+    const d = document.createElement("div");
+    d.className = "muted";
+    d.style.marginTop = "6px";
+    d.style.lineHeight = "1.35";
+    d.textContent = text;
+    return d;
+  }
+
+  function renderChips(chips) {
+    if (!chips || !chips.length) return null;
     const tagsRow = document.createElement("div");
     tagsRow.className = "tags";
-    for (const t of tags) {
+    for (const t of chips) {
       const tag = document.createElement("span");
       tag.className = "tag";
       tag.textContent = t;
@@ -869,12 +946,17 @@
 
       if (t.kind === "single") {
         box.appendChild(renderBallsRow(t.nums));
-        const tagsNode = renderTags(buildTags(t.nums, out.statsPack));
-        if (tagsNode) box.appendChild(tagsNode);
+        const exp = explainNums(t.nums.slice().sort((a,b)=>a-b), out.statsPack);
+        box.appendChild(renderSummaryLine(exp.summary));
+        const chips = renderChips(exp.chips);
+        if (chips) box.appendChild(chips);
       }
 
       if (t.kind === "multi") {
         box.appendChild(renderBallsRow(t.nums, `複式：${t.nums.length} 碼`));
+        const exp = explainNums(t.nums.slice().sort((a,b)=>a-b), out.statsPack);
+        box.appendChild(renderSummaryLine(exp.summary));
+
         const bets = nCk(t.nums.length, 6);
         const info = document.createElement("div");
         info.className = "muted";
@@ -882,13 +964,36 @@
         info.textContent = `共 ${bets} 注｜金額 $${bets * PRICE_PER_BET}`;
         box.appendChild(info);
 
-        const tagsNode = renderTags(buildTags(t.nums, out.statsPack));
-        if (tagsNode) box.appendChild(tagsNode);
+        const chips = renderChips(exp.chips);
+        if (chips) box.appendChild(chips);
       }
 
       if (t.kind === "danTuo") {
         box.appendChild(renderBallsRow(t.dan, `膽（${t.dan.length}）`));
         box.appendChild(renderBallsRow(t.tuo, `腳／拖（${t.tuo.length}）`));
+
+        // v2.1: split summaries + overall
+        const danExp = explainNums(t.dan.slice().sort((a,b)=>a-b), out.statsPack);
+        const tuoExp = explainNums(t.tuo.slice().sort((a,b)=>a-b), out.statsPack);
+        const allExp = explainNums(t.all.slice().sort((a,b)=>a-b), out.statsPack);
+
+        const s1 = document.createElement("div");
+        s1.className = "muted";
+        s1.style.marginTop = "6px";
+        s1.textContent = `膽：${danExp.summary}`;
+        box.appendChild(s1);
+
+        const s2 = document.createElement("div");
+        s2.className = "muted";
+        s2.style.marginTop = "4px";
+        s2.textContent = `腳：${tuoExp.summary}`;
+        box.appendChild(s2);
+
+        const s3 = document.createElement("div");
+        s3.className = "muted";
+        s3.style.marginTop = "4px";
+        s3.textContent = `全組（膽+腳）：${allExp.summary}`;
+        box.appendChild(s3);
 
         const bets = danTuoBets(t.dan.length, t.tuo.length);
         const info = document.createElement("div");
@@ -897,8 +1002,8 @@
         info.textContent = `共 ${bets} 注｜金額 $${bets * PRICE_PER_BET}`;
         box.appendChild(info);
 
-        const tagsNode = renderTags(buildTags(t.all, out.statsPack));
-        if (tagsNode) box.appendChild(tagsNode);
+        const chips = renderChips(allExp.chips);
+        if (chips) box.appendChild(chips);
       }
 
       // ✅ 5膽全餐（基本買法，多組）：顯示 膽 + 腳（不列 44 注）
@@ -906,15 +1011,37 @@
         box.appendChild(renderBallsRow(t.dan, `膽（5）`));
         box.appendChild(renderBallsRow(t.legs, `腳（44）`));
 
+        const danExp = explainNums(t.dan.slice().sort((a,b)=>a-b), out.statsPack);
+        const legsExp = explainNums(t.legs.slice().sort((a,b)=>a-b), out.statsPack);
+        const allExp = explainNums(t.all.slice().sort((a,b)=>a-b), out.statsPack);
+
+        const s1 = document.createElement("div");
+        s1.className = "muted";
+        s1.style.marginTop = "6px";
+        s1.textContent = `膽：${danExp.summary}`;
+        box.appendChild(s1);
+
+        const s2 = document.createElement("div");
+        s2.className = "muted";
+        s2.style.marginTop = "4px";
+        s2.textContent = `腳：${legsExp.summary}`;
+        box.appendChild(s2);
+
+        const s3 = document.createElement("div");
+        s3.className = "muted";
+        s3.style.marginTop = "4px";
+        s3.textContent = `全組（膽+腳）：${allExp.summary}`;
+        box.appendChild(s3);
+
         const info = document.createElement("div");
         info.className = "muted";
         info.style.marginTop = "6px";
         info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
         box.appendChild(info);
 
-        // tags based on dan (keyNums)
-        const tagsNode = renderTags(buildTags(t.dan.slice().sort((a,b)=>a-b), out.statsPack));
-        if (tagsNode) box.appendChild(tagsNode);
+        // chips use all-set description
+        const chips = renderChips(allExp.chips);
+        if (chips) box.appendChild(chips);
       }
 
       result.appendChild(box);
@@ -942,8 +1069,12 @@
       box.className = "resultSet";
       box.innerHTML = `<div><b>第 ${idx + 1} 注</b></div>`;
       box.appendChild(renderBallsRow(nums));
-      const tagsNode = renderTags(buildTags(nums, out.statsPack));
-      if (tagsNode) box.appendChild(tagsNode);
+
+      const exp = explainNums(nums.slice().sort((a,b)=>a-b), out.statsPack);
+      box.appendChild(renderSummaryLine(exp.summary));
+      const chips = renderChips(exp.chips);
+      if (chips) box.appendChild(chips);
+
       result.appendChild(box);
     });
   }
