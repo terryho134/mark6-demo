@@ -250,9 +250,12 @@
     updateTuoOptions();
   }
 
+  // ✅ 修正：拖（腳）最少 = 7 - 膽
+  // 1膽：6–48, 2膽：5–47, 3膽：4–46, 4膽：3–45, 5膽：2–44
   function updateTuoOptions() {
     const d = Number(danN.value || 1);
-    const minTuo = (d === 5) ? 2 : (6 - d);
+
+    const minTuo = 7 - d;      // ✅ 修正重點
     const maxTuo = 49 - d;
 
     const opts = [];
@@ -359,6 +362,7 @@
   }
 
   function danTuoBets(d, t) {
+    // 下注注數仍然用組合：每注要 6 粒，所以需從拖裡揀 (6-d)
     const need = 6 - d;
     return t >= need ? nCk(t, need) : 0;
   }
@@ -437,7 +441,6 @@
 
   // ---------- Constraints ----------
   function checkAdvancedConstraints(numsSorted, statsPack) {
-    // numsSorted can be 6 / 7–15 / dan+tuo length, etc.
     if (maxConsec.value) {
       const lim = Number(maxConsec.value);
       if (maxConsecutiveRun(numsSorted) > lim) return false;
@@ -579,7 +582,6 @@
       return { kind: "danTuo", dan, tuo, all, keyNums: all };
     }
 
-    // should not hit here for full meals
     const nums = sampleDistinct(6);
     return { kind: "single", nums, keyNums: nums };
   }
@@ -658,7 +660,6 @@
 
         if (!strict) return { kind: "full5dan", dan, legs, all, strict, statsPack, attempts: t + 1 };
 
-        // strict: apply constraints to the whole selected set (dan+legs)
         if (checkAdvancedConstraints(all, statsPack)) {
           return { kind: "full5dan", dan, legs, all, strict, statsPack, attempts: t + 1 };
         }
@@ -682,7 +683,7 @@
     throw new Error("全餐套用嚴格條件後仍未能生成。建議取消部分條件，或先用「基本買法」。");
   }
 
-  // ---------- 9/17 packs (already validated correct) ----------
+  // ---------- 9/17 packs ----------
   function buildPack9() {
     const pool = Array.from({ length: 49 }, (_, i) => i + 1);
     shuffle(pool);
@@ -722,7 +723,7 @@
       bets.push([x, ...R5].sort((a, b) => a - b));
 
       const U49 = Array.from({ length: 49 }, (_, i) => i + 1);
-      const S44 = U49.filter((n) => !R5set.has(n)); // exclude R5
+      const S44 = U49.filter((n) => !R5set.has(n));
 
       const sTmp = [...S44];
       shuffle(sTmp);
@@ -739,7 +740,7 @@
       bets.push([...L2, ...pick4].sort((a, b) => a - b));
       if (validatePack17(bets, R5set)) return bets;
     }
-    return buildPack17(); // retry hard if extremely unlucky
+    return buildPack17();
   }
 
   function validatePack9(bets) {
@@ -777,7 +778,6 @@
       }
     }
 
-    // bets 10-16 indices 9..15 must not include R5
     for (let i = 9; i <= 15; i++) for (const n of bets[i]) if (R5set.has(n)) return false;
 
     let twos = 0, threes = 0, other = 0;
@@ -789,7 +789,7 @@
     return twos === 45 && threes === 4 && other === 0;
   }
 
-  // ---------- Render helpers ----------
+  // ---------- Render ----------
   function clearResult() { result.innerHTML = ""; }
 
   function renderBallsRow(nums, labelText = "") {
@@ -829,7 +829,6 @@
     return tagsRow;
   }
 
-  // ---------- Render normal tickets (single/multi/danTuo) ----------
   function renderNormalTickets(out) {
     clearResult();
 
@@ -844,30 +843,26 @@
       const box = document.createElement("div");
       box.className = "resultSet";
 
-      // Header line
       const title = document.createElement("div");
       title.innerHTML = `<b>第 ${idx + 1} 組</b>`;
       box.appendChild(title);
 
       if (t.kind === "single") {
         box.appendChild(renderBallsRow(t.nums));
-        const tags = buildTags(t.nums, out.statsPack);
-        const tagsNode = renderTags(tags);
+        const tagsNode = renderTags(buildTags(t.nums, out.statsPack));
         if (tagsNode) box.appendChild(tagsNode);
       }
 
       if (t.kind === "multi") {
         box.appendChild(renderBallsRow(t.nums, `複式：${t.nums.length} 碼`));
         const bets = nCk(t.nums.length, 6);
-        const cost = bets * PRICE_PER_BET;
         const info = document.createElement("div");
         info.className = "muted";
         info.style.marginTop = "6px";
-        info.textContent = `共 ${bets} 注｜金額 $${cost}`;
+        info.textContent = `共 ${bets} 注｜金額 $${bets * PRICE_PER_BET}`;
         box.appendChild(info);
 
-        const tags = buildTags(t.nums, out.statsPack);
-        const tagsNode = renderTags(tags);
+        const tagsNode = renderTags(buildTags(t.nums, out.statsPack));
         if (tagsNode) box.appendChild(tagsNode);
       }
 
@@ -876,16 +871,13 @@
         box.appendChild(renderBallsRow(t.tuo, `腳／拖（${t.tuo.length}）`));
 
         const bets = danTuoBets(t.dan.length, t.tuo.length);
-        const cost = bets * PRICE_PER_BET;
         const info = document.createElement("div");
         info.className = "muted";
         info.style.marginTop = "6px";
-        info.textContent = `共 ${bets} 注｜金額 $${cost}`;
+        info.textContent = `共 ${bets} 注｜金額 $${bets * PRICE_PER_BET}`;
         box.appendChild(info);
 
-        // tags based on all selected numbers
-        const tags = buildTags(t.all, out.statsPack);
-        const tagsNode = renderTags(tags);
+        const tagsNode = renderTags(buildTags(t.all, out.statsPack));
         if (tagsNode) box.appendChild(tagsNode);
       }
 
@@ -893,11 +885,9 @@
     });
   }
 
-  // ---------- Render full meals ----------
   function renderFullMeal(out) {
     clearResult();
 
-    // Head
     const head = document.createElement("div");
     head.className = "muted";
 
@@ -911,7 +901,6 @@
       : `生成方式：<b>${title}</b>（純隨機）`;
     result.appendChild(head);
 
-    // ✅ 5膽全餐：只顯示膽＋腳（不列 44 注）
     if (out.kind === "full5dan") {
       const box = document.createElement("div");
       box.className = "resultSet";
@@ -926,24 +915,20 @@
       info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
       box.appendChild(info);
 
-      // tags based on all selected numbers (49)
-      const tags = buildTags(out.all, out.statsPack);
-      const tagsNode = renderTags(tags);
+      const tagsNode = renderTags(buildTags(out.all, out.statsPack));
       if (tagsNode) box.appendChild(tagsNode);
 
       result.appendChild(box);
       return;
     }
 
-    // 9/17 全餐：仍然列出每一注（9 或 17 注可接受）
     const bets = out.bets || [];
     bets.forEach((nums, idx) => {
       const box = document.createElement("div");
       box.className = "resultSet";
       box.innerHTML = `<div><b>第 ${idx + 1} 注</b></div>`;
       box.appendChild(renderBallsRow(nums));
-      const tags = buildTags(nums, out.statsPack);
-      const tagsNode = renderTags(tags);
+      const tagsNode = renderTags(buildTags(nums, out.statsPack));
       if (tagsNode) box.appendChild(tagsNode);
       result.appendChild(box);
     });
@@ -1021,7 +1006,6 @@
   btnClear.addEventListener("click", onClear);
 
   // ---------- init ----------
-  // Advanced: remove "最多1" => only Off / 2 / 3
   setOptions2(maxConsec, withOff([2, 3], "Off"), true);
   setOptions2(maxTail, withOff([2, 3], "Off"), true);
 
