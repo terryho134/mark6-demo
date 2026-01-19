@@ -781,4 +781,185 @@
     if (R5set && typeof R5set.has === "function") {
       for (let i = 9; i <= 15; i++) {
         for (const n of bets[i]) {
-          if (R5set.has(n))
+          if (R5set.has(n)) return false;
+        }
+      }
+    }
+
+    // Distribution validation:
+    // Expect: 45 numbers appear twice, 4 numbers appear three times
+    let twos = 0, threes = 0, other = 0;
+    for (let i = 1; i <= 49; i++) {
+      if (cnt[i] === 2) twos++;
+      else if (cnt[i] === 3) threes++;
+      else other++;
+    }
+    return twos === 45 && threes === 4 && other === 0;
+  }
+
+  function buildPack5dan() {
+    // MVP representation:
+    // pick 5 dan; then for each of remaining 44 numbers make a bet (dan + that leg) => 44 bets
+    const pool = Array.from({ length: 49 }, (_, i) => i + 1);
+    shuffle(pool);
+    const dan = pool.slice(0, 5).sort((a, c) => a - c);
+    const legs = pool.slice(5).sort((a, c) => a - c); // 44
+    const bets = legs.map((x) => [...dan, x].sort((a, c) => a - c));
+    return bets;
+  }
+
+  // ---------- Render ----------
+  function clearResult() {
+    result.innerHTML = "";
+  }
+
+  function renderNormal(sets, meta) {
+    clearResult();
+
+    const head = document.createElement("div");
+    head.className = "muted";
+    head.innerHTML = meta.strict
+      ? `生成方式：<b>嚴格條件生成</b>（Level ${meta.level}，最多 ${meta.maxAllowed} 組）｜已生成 ${sets.length} 組｜嘗試 ${meta.attempts} 次`
+      : `生成方式：<b>純隨機</b>｜已生成 ${sets.length} 組`;
+    result.appendChild(head);
+
+    sets.forEach((nums, idx) => {
+      const box = document.createElement("div");
+      box.className = "resultSet";
+      box.innerHTML = `<div><b>第 ${idx + 1} 組</b></div>`;
+
+      const numsRow = document.createElement("div");
+      numsRow.className = "nums";
+      nums.forEach((n) => {
+        const b = document.createElement("div");
+        b.className = "ball";
+        b.textContent = String(n).padStart(2, "0");
+        numsRow.appendChild(b);
+      });
+      box.appendChild(numsRow);
+
+      const tags = buildTags(nums, meta.statsPack);
+      if (tags.length) {
+        const tagsRow = document.createElement("div");
+        tagsRow.className = "tags";
+        for (const t of tags) {
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = t;
+          tagsRow.appendChild(tag);
+        }
+        box.appendChild(tagsRow);
+      }
+
+      result.appendChild(box);
+    });
+  }
+
+  function renderPack(mode, bets, meta) {
+    clearResult();
+
+    const title =
+      mode === "full9" ? "9注全餐（1 套）" :
+      mode === "full17" ? "17注全餐（1 套）" :
+      "5膽全餐（1 套）";
+
+    const head = document.createElement("div");
+    head.className = "muted";
+    head.innerHTML = meta.strict
+      ? `生成方式：<b>${title}</b> + 嚴格條件（已套用）｜嘗試 ${meta.attempts} 次`
+      : `生成方式：<b>${title}</b>（純隨機）`;
+    result.appendChild(head);
+
+    bets.forEach((nums, idx) => {
+      const box = document.createElement("div");
+      box.className = "resultSet";
+      box.innerHTML = `<div><b>第 ${idx + 1} 注</b></div>`;
+
+      const numsRow = document.createElement("div");
+      numsRow.className = "nums";
+      nums.forEach((n) => {
+        const b = document.createElement("div");
+        b.className = "ball";
+        b.textContent = String(n).padStart(2, "0");
+        numsRow.appendChild(b);
+      });
+      box.appendChild(numsRow);
+
+      const tags = buildTags(nums, meta.statsPack);
+      if (tags.length) {
+        const tagsRow = document.createElement("div");
+        tagsRow.className = "tags";
+        for (const t of tags) {
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = t;
+          tagsRow.appendChild(tag);
+        }
+        box.appendChild(tagsRow);
+      }
+
+      result.appendChild(box);
+    });
+  }
+
+  // ---------- Actions ----------
+  async function onGenerate() {
+    try {
+      btnGenerate.disabled = true;
+
+      if (hotMin.value || hotMax.value || coldMin.value || coldMax.value) {
+        const n = Number(statN.value);
+        if (!N_ALLOWED.includes(n)) throw new Error("Invalid N");
+        await getStats(n);
+      }
+
+      const mode = buyMode.value;
+
+      if (isAdvancedBuyMode(mode)) {
+        const pack = await generateFullMeal(mode);
+        renderPack(mode, pack.bets, pack);
+        showToast("已生成 1 套注單");
+        return;
+      }
+
+      const desiredSets = Number(setCount.value || 1);
+      const out = await generateNormalSets(desiredSets);
+      renderNormal(out.sets, out);
+
+      showToast(out.strict ? "已按條件生成" : "已純隨機生成");
+    } catch (e) {
+      clearResult();
+      const msg = (e && e.message) ? e.message : String(e);
+      const box = document.createElement("div");
+      box.className = "resultSet";
+      box.innerHTML = `<div class="bad"><b>未能生成</b></div><div class="muted" style="margin-top:6px">${escapeHtml(msg)}</div>`;
+      result.appendChild(box);
+      showToast("生成失敗（請放寬條件）");
+    } finally {
+      btnGenerate.disabled = false;
+    }
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+    }[c]));
+  }
+
+  // ---------- Events ----------
+  const inputs = [
+    buyMode, setCount, multiN, danN, tuoN,
+    maxConsec, avoidAllOddEven, maxTail, maxTensGroup, maxColor,
+    eachColorAtLeast1, avoidColor, sumHigh, sumLow,
+    statN, hotMin, hotMax, coldMin, coldMax,
+    overlapMax
+  ];
+  inputs.forEach((x) => x.addEventListener("change", updateSetCountOptions));
+
+  btnGenerate.addEventListener("click", onGenerate);
+  btnClear.addEventListener("click", () => { clearResult(); showToast("已清空"); });
+
+  // init
+  setOptions(setCount, Array.from({ length: 10 }, (_, i) => i + 1));
+  updateSetCountOptions();
+})();
