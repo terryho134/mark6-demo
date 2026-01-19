@@ -147,8 +147,9 @@
     return [{ value: "", label: offLabel }, ...values.map(v => ({ value: v, label: String(v) }))];
   }
 
+  // ✅ 只有 9/17 全餐仍屬「進階買法」固定 1 套
   function isAdvancedBuyMode(mode) {
-    return mode === "full9" || mode === "full17" || mode === "full5dan";
+    return mode === "full9" || mode === "full17";
   }
 
   function anyAdvancedSelected() {
@@ -250,12 +251,11 @@
     updateTuoOptions();
   }
 
-  // ✅ 修正：拖（腳）最少 = 7 - 膽
-  // 1膽：6–48, 2膽：5–47, 3膽：4–46, 4膽：3–45, 5膽：2–44
+  // ✅ 拖（腳）最少 = 7 - 膽
   function updateTuoOptions() {
     const d = Number(danN.value || 1);
 
-    const minTuo = 7 - d;      // ✅ 修正重點
+    const minTuo = 7 - d;
     const maxTuo = 49 - d;
 
     const opts = [];
@@ -316,8 +316,8 @@
     if (isAdvancedBuyMode(buyMode.value)) {
       setCount.disabled = true;
       setOptions2(setCount, [1]);
-      setCountHint.textContent = "進階買法：每次只生成 1 套注單。";
-      limitHint.textContent = "進階買法：固定只可生成 1 套。";
+      setCountHint.textContent = "進階全餐：每次只生成 1 套注單。";
+      limitHint.textContent = "進階全餐：固定只可生成 1 套。";
     } else {
       setCount.disabled = false;
       const opts = [];
@@ -362,7 +362,6 @@
   }
 
   function danTuoBets(d, t) {
-    // 下注注數仍然用組合：每注要 6 粒，所以需從拖裡揀 (6-d)
     const need = 6 - d;
     return t >= need ? nCk(t, need) : 0;
   }
@@ -373,25 +372,33 @@
     danBox.classList.toggle("hidden", mode !== "danTuo");
     tuoBox.classList.toggle("hidden", mode !== "danTuo");
 
+    const sets = Number(setCount.value || 1);
+
     if (mode === "single") {
       buyModeHint.textContent = `每組 1 注（$${PRICE_PER_BET}）`;
     } else if (mode === "multi") {
       const n = Number(multiN.value);
       const bets = nCk(n, 6);
       buyModeHint.textContent = `${n} 碼複式：共 ${bets} 注`;
-      multiCostHint.textContent = `金額：$${bets * PRICE_PER_BET}`;
+      multiCostHint.textContent = `每組金額：$${bets * PRICE_PER_BET}${setCount.disabled ? "" : `｜${sets}組總額：$${bets * PRICE_PER_BET * sets}`}`;
     } else if (mode === "danTuo") {
       const d = Number(danN.value);
       const t = Number(tuoN.value);
       const bets = danTuoBets(d, t);
       buyModeHint.textContent = `${d} 膽 + ${t} 拖：共 ${bets} 注`;
-      danTuoCostHint.textContent = bets > 0 ? `金額：$${bets * PRICE_PER_BET}` : "拖數不足，無法組合成 6 粒。";
+      danTuoCostHint.textContent =
+        bets > 0
+          ? `每組金額：$${bets * PRICE_PER_BET}${setCount.disabled ? "" : `｜${sets}組總額：$${bets * PRICE_PER_BET * sets}`}`
+          : "拖數不足，無法組合成 6 粒。";
     } else if (mode === "full9") {
       buyModeHint.textContent = "9注全餐：1 套 9 注（$90）";
     } else if (mode === "full17") {
       buyModeHint.textContent = "17注全餐：1 套 17 注（$170）";
     } else if (mode === "full5dan") {
-      buyModeHint.textContent = "5 膽全餐：5 膽 + 44 腳（44 注，$440）";
+      // ✅ 改為基本買法：可多組
+      const per = 44 * PRICE_PER_BET; // 44注
+      buyModeHint.textContent = `5 膽全餐：每組 44 注（$${per}）`;
+      danTuoCostHint.textContent = setCount.disabled ? "" : `${sets}組總額：$${per * sets}`;
     }
   }
 
@@ -538,6 +545,7 @@
     const red = cm.get("red") || 0;
     const blue = cm.get("blue") || 0;
     const green = cm.get("green") || 0;
+
     if (maxColor.value || eachColorAtLeast1.checked || avoidColor.value) {
       tags.push(`顏色：紅×${red} 藍×${blue} 綠×${green}`);
     }
@@ -582,6 +590,17 @@
       return { kind: "danTuo", dan, tuo, all, keyNums: all };
     }
 
+    // ✅ 5膽全餐：基本買法 -> 生成「膽 + 腳」，組與組多樣性用「膽」去衡量
+    if (mode === "full5dan") {
+      const dan = sampleDistinct(5);
+      const danSet = new Set(dan);
+      const legs = [];
+      for (let i = 1; i <= 49; i++) if (!danSet.has(i)) legs.push(i);
+      const all = [...dan, ...legs].sort((a, b) => a - b);
+      return { kind: "full5dan", dan, legs, all, keyNums: dan }; // keyNums = dan
+    }
+
+    // fallback
     const nums = sampleDistinct(6);
     return { kind: "single", nums, keyNums: nums };
   }
@@ -603,7 +622,7 @@
     const overlapK = overlapMax.value === "" ? null : Number(overlapMax.value);
 
     const tickets = [];
-    const ATTEMPT_LIMIT = 120000;
+    const ATTEMPT_LIMIT = 160000;
     let attempts = 0;
 
     while (tickets.length < target && attempts < ATTEMPT_LIMIT) {
@@ -613,6 +632,7 @@
       const numsSorted = (t.keyNums || []).slice().sort((a, b) => a - b);
 
       if (strict) {
+        // ✅ full5dan：條件判斷同 tags 都套用「膽」(keyNums)
         if (!checkAdvancedConstraints(numsSorted, statsPack)) continue;
 
         if (overlapK !== null) {
@@ -637,7 +657,7 @@
     return { tickets, strict, statsPack, level, maxAllowed, attempts };
   }
 
-  // ---------- Full meal generators ----------
+  // ---------- Full meal generators (9/17 only) ----------
   async function generateFullMeal(mode) {
     const strict = anyAdvancedSelected();
     const issues = hardConflicts();
@@ -651,21 +671,6 @@
     const PACK_ATTEMPT_LIMIT = 4000;
 
     for (let t = 0; t < PACK_ATTEMPT_LIMIT; t++) {
-      if (mode === "full5dan") {
-        const dan = sampleDistinct(5);
-        const danSet = new Set(dan);
-        const legs = [];
-        for (let i = 1; i <= 49; i++) if (!danSet.has(i)) legs.push(i);
-        const all = [...dan, ...legs].sort((a, b) => a - b);
-
-        if (!strict) return { kind: "full5dan", dan, legs, all, strict, statsPack, attempts: t + 1 };
-
-        if (checkAdvancedConstraints(all, statsPack)) {
-          return { kind: "full5dan", dan, legs, all, strict, statsPack, attempts: t + 1 };
-        }
-        continue;
-      }
-
       let bets = [];
       if (mode === "full9") bets = buildPack9();
       if (mode === "full17") bets = buildPack17();
@@ -683,7 +688,7 @@
     throw new Error("全餐套用嚴格條件後仍未能生成。建議取消部分條件，或先用「基本買法」。");
   }
 
-  // ---------- 9/17 packs ----------
+  // ---------- 9/17 packs (validated correct) ----------
   function buildPack9() {
     const pool = Array.from({ length: 49 }, (_, i) => i + 1);
     shuffle(pool);
@@ -792,17 +797,17 @@
   // ---------- Render ----------
   function clearResult() { result.innerHTML = ""; }
 
+  // ✅ 顯示顏色：用 ring（唔破壞你原本 ball 風格）
   function renderBallsRow(nums, labelText = "") {
-    // 你可以按需要調整呢 3 隻顏色（而家用較清晰、適合深色背景嘅 ring）
     const COLOR_HEX = {
       red: "#ef4444",
       blue: "#3b82f6",
       green: "#22c55e",
     };
-  
+
     const wrap = document.createElement("div");
     wrap.className = "numsRow";
-  
+
     if (labelText) {
       const label = document.createElement("div");
       label.className = "muted";
@@ -810,30 +815,26 @@
       label.innerHTML = `<b>${labelText}</b>`;
       wrap.appendChild(label);
     }
-  
+
     const row = document.createElement("div");
     row.className = "nums";
-  
+
     nums.forEach((n) => {
       const b = document.createElement("div");
       b.className = "ball";
       b.textContent = String(n).padStart(2, "0");
-  
-      // ✅ 顏色：紅/藍/綠
-      const c = colorOf(n); // "red" | "blue" | "green"
+
+      const c = colorOf(n);
       b.setAttribute("data-color", c);
       b.title = c === "red" ? "紅" : c === "blue" ? "藍" : "綠";
-  
-      // ✅ 用內圈 ring 表示顏色（唔會破壞你原本 ball 的背景/樣式）
       b.style.boxShadow = `0 0 0 2px ${COLOR_HEX[c]} inset`;
-  
+
       row.appendChild(b);
     });
-  
+
     wrap.appendChild(row);
     return wrap;
   }
-
 
   function renderTags(tags) {
     if (!tags || !tags.length) return null;
@@ -900,6 +901,22 @@
         if (tagsNode) box.appendChild(tagsNode);
       }
 
+      // ✅ 5膽全餐（基本買法，多組）：顯示 膽 + 腳（不列 44 注）
+      if (t.kind === "full5dan") {
+        box.appendChild(renderBallsRow(t.dan, `膽（5）`));
+        box.appendChild(renderBallsRow(t.legs, `腳（44）`));
+
+        const info = document.createElement("div");
+        info.className = "muted";
+        info.style.marginTop = "6px";
+        info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
+        box.appendChild(info);
+
+        // tags based on dan (keyNums)
+        const tagsNode = renderTags(buildTags(t.dan.slice().sort((a,b)=>a-b), out.statsPack));
+        if (tagsNode) box.appendChild(tagsNode);
+      }
+
       result.appendChild(box);
     });
   }
@@ -912,34 +929,12 @@
 
     const title =
       out.kind === "full9" ? "9注全餐（1 套）" :
-      out.kind === "full17" ? "17注全餐（1 套）" :
-      "5 膽全餐（1 套）";
+      "17注全餐（1 套）";
 
     head.innerHTML = out.strict
       ? `生成方式：<b>${title}</b> + 嚴格條件（已套用）｜嘗試 ${out.attempts} 次`
       : `生成方式：<b>${title}</b>（純隨機）`;
     result.appendChild(head);
-
-    if (out.kind === "full5dan") {
-      const box = document.createElement("div");
-      box.className = "resultSet";
-      box.innerHTML = `<div><b>5 膽全餐</b></div>`;
-
-      box.appendChild(renderBallsRow(out.dan, `膽（5）`));
-      box.appendChild(renderBallsRow(out.legs, `腳（44）`));
-
-      const info = document.createElement("div");
-      info.className = "muted";
-      info.style.marginTop = "6px";
-      info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
-      box.appendChild(info);
-
-      const tagsNode = renderTags(buildTags(out.all, out.statsPack));
-      if (tagsNode) box.appendChild(tagsNode);
-
-      result.appendChild(box);
-      return;
-    }
 
     const bets = out.bets || [];
     bets.forEach((nums, idx) => {
@@ -972,6 +967,7 @@
 
       const mode = buyMode.value;
 
+      // ✅ 只有 9/17 全餐用 generateFullMeal（固定1套）
       if (isAdvancedBuyMode(mode)) {
         const out = await generateFullMeal(mode);
         renderFullMeal(out);
@@ -979,6 +975,7 @@
         return;
       }
 
+      // ✅ 基本買法（包括 full5dan）：可 1–10 組（受 Level cap 影響）
       const desired = Number(setCount.value || 1);
       const out = await generateNormalTickets(desired);
       renderNormalTickets(out);
@@ -1025,6 +1022,7 @@
   btnClear.addEventListener("click", onClear);
 
   // ---------- init ----------
+  // Advanced: remove "最多1" => only Off / 2 / 3
   setOptions2(maxConsec, withOff([2, 3], "Off"), true);
   setOptions2(maxTail, withOff([2, 3], "Off"), true);
 
