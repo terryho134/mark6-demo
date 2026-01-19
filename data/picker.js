@@ -793,9 +793,16 @@
   function clearResult() { result.innerHTML = ""; }
 
   function renderBallsRow(nums, labelText = "") {
+    // 你可以按需要調整呢 3 隻顏色（而家用較清晰、適合深色背景嘅 ring）
+    const COLOR_HEX = {
+      red: "#ef4444",
+      blue: "#3b82f6",
+      green: "#22c55e",
+    };
+  
     const wrap = document.createElement("div");
     wrap.className = "numsRow";
-
+  
     if (labelText) {
       const label = document.createElement("div");
       label.className = "muted";
@@ -803,18 +810,30 @@
       label.innerHTML = `<b>${labelText}</b>`;
       wrap.appendChild(label);
     }
-
+  
     const row = document.createElement("div");
     row.className = "nums";
+  
     nums.forEach((n) => {
       const b = document.createElement("div");
       b.className = "ball";
       b.textContent = String(n).padStart(2, "0");
+  
+      // ✅ 顏色：紅/藍/綠
+      const c = colorOf(n); // "red" | "blue" | "green"
+      b.setAttribute("data-color", c);
+      b.title = c === "red" ? "紅" : c === "blue" ? "藍" : "綠";
+  
+      // ✅ 用內圈 ring 表示顏色（唔會破壞你原本 ball 的背景/樣式）
+      b.style.boxShadow = `0 0 0 2px ${COLOR_HEX[c]} inset`;
+  
       row.appendChild(b);
     });
+  
     wrap.appendChild(row);
     return wrap;
   }
+
 
   function renderTags(tags) {
     if (!tags || !tags.length) return null;
