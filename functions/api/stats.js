@@ -26,13 +26,72 @@ function parseNums(str) {
     .filter((n) => n >= 1 && n <= 49);
 }
 
+// Picker helpers (hot/cold use MAIN numbers only; special is excluded)
+function buildPickerStats(draws, n, k = 10) {
+  const counts = Array(50).fill(0); // 1..49
+  const sample = draws.slice(0, n);
+
+  for (const d of sample) {
+    const nums = parseNums(d.numbers); // main 6 numbers
+    for (const x of nums) counts[x] += 1;
+  }
+
+  const freq = [];
+  for (let i = 1; i <= 49; i++) freq.push({ n: i, c: counts[i] });
+
+  const top10 = [...freq]
+    .sort((a, b) => (b.c - a.c) || (a.n - b.n))
+    .slice(0, k);
+
+  const bottom10 = [...freq]
+    .sort((a, b) => (a.c - b.c) || (a.n - b.n))
+    .slice(0, k);
+
+  const last = draws[0] || null;
+  const lastDraw = last
+    ? {
+        drawNo: last.drawNo,
+        drawDate: last.drawDate,
+        numbers: parseNums(last.numbers),
+        special: Number(last.special),
+      }
+    : null;
+
+  return {
+    ok: true,
+    n,
+    k,
+    freq,
+    top10,
+    bottom10,
+    lastDraw,
+    sampleSize: sample.length,
+  };
+}
+
 export async function onRequestGet(context) {
   const { request, env } = context;
   const ctx = context;
 
+  // --- Picker N param (for /api/stats?n=10|20|30|60|100) ---
+  const url = new URL(request.url);
+  const nRaw = url.searchParams.get("n");
+  const allowedN = new Set(["10", "20", "30", "60", "100"]);
+
+  // default to 30 if not provided
+  const pickerN = nRaw == null || nRaw === "" ? 30 : Number(nRaw);
+
+  if (nRaw != null && nRaw !== "" && !allowedN.has(nRaw)) {
+    return jsonError("Invalid n. Allowed: 10, 20, 30, 60, 100", 400);
+  }
+
   try {
     const db = getDb(env);
-    if (!db) return jsonError("D1 binding not found. Please check env binding name.", 500);
+    if (!db)
+      return jsonError(
+        "D1 binding not found. Please check env binding name.",
+        500
+      );
 
     const metaLatest = await getLatestDrawMeta(db);
 
@@ -75,7 +134,7 @@ export async function onRequestGet(context) {
           // gap based on main only
           for (const n of nums) if (lastSeenIdx[n] === null) lastSeenIdx[n] = idx;
 
-          // total includes main+special
+          // total includes main+special (existing behavior kept for old UI)
           for (const n of nums) totalCount[n] += 1;
           if (sp >= 1 && sp <= 49) totalCount[sp] += 1;
 
@@ -133,6 +192,9 @@ export async function onRequestGet(context) {
           });
         }
 
+        // ✅ NEW: picker stats (MAIN numbers only, special excluded)
+        const picker = buildPickerStats(draws, Math.min(pickerN, totalDraws), 10);
+
         const payload = {
           ok: true,
           totalDraws, // top-level
@@ -145,12 +207,15 @@ export async function onRequestGet(context) {
             deployVer,
           },
 
-          // primary + aliases
+          // primary + aliases (existing, for old UI)
           rows,
           stats: rows,
           items: rows,
           data: rows,
           list: rows,
+
+          // ✅ new block for 智能揀號 v2
+          picker,
         };
 
         return payload;
