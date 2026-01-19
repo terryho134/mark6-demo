@@ -122,3 +122,21 @@ select:disabled { opacity: .45; }
   color: var(--muted);
 }
 .bad { color: var(--bad) !important; }
+
+/* Dark dropdowns to match overall theme */
+select {
+  background: #151515;
+  color: #f1f1f1;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 10px;
+}
+
+select:focus {
+  outline: none;
+  border-color: rgba(255,255,255,.35);
+}
+
+option {
+  background: #151515;
+  color: #f1f1f1;
+}
