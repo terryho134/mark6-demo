@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>智能揀號（v2）｜六合彩 Mark Six</title>
+  <link rel="stylesheet" href="/data/picker.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/index.html">mark6.imhandso.me</a>
+    <nav class="nav">
+      <a href="/checker.html">對獎</a>
+      <a href="/stats.html">統計</a>
+      <a class="active" href="/picker.html">智能揀號</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <h1>智能揀號 v2</h1>
+
+    <section class="card">
+      <h2>Basic</h2>
+
+      <div class="grid2">
+        <div>
+          <label>買法</label>
+          <select id="buyMode">
+            <optgroup label="基本買法">
+              <option value="single">單式（6個號碼）</option>
+              <option value="multi">複式（選擇號碼數）</option>
+              <option value="danTuo">膽拖（選擇膽數＋腳數）</option>
+            </optgroup>
+
+            <optgroup label="進階買法（每次只生成 1 套）">
+              <option value="full9">9注全餐（1 套 9 注）</option>
+              <option value="full17">17注全餐（1 套 17 注）</option>
+              <option value="full5dan">5膽全餐（5 膽 + 44 腳）</option>
+            </optgroup>
+          </select>
+          <div class="hint" id="buyModeHint"></div>
+        </div>
+
+        <div>
+          <label>生成組數</label>
+          <select id="setCount"></select>
+          <div class="hint" id="setCountHint"></div>
+        </div>
+      </div>
+
+      <div class="grid3">
+        <div id="multiBox" class="hidden">
+          <label>複式：總共選幾多個號碼？</label>
+          <select id="multiN">
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10</option>
+          </select>
+          <div class="hint" id="multiCostHint"></div>
+        </div>
+
+        <div id="danBox" class="hidden">
+          <label>膽拖：膽數</label>
+          <select id="danN">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
+        </div>
+
+        <div id="tuoBox" class="hidden">
+          <label>膽拖：拖數（腳）</label>
+          <select id="tuoN">
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10</option>
+          </select>
+          <div class="hint" id="danTuoCostHint"></div>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="btnGenerate" class="primary">生成</button>
+        <button id="btnClear" class="ghost">清空結果</button>
+        <span id="toast" class="toast hidden"></span>
+      </div>
+
+      <div class="muted" id="modeLabel"></div>
+    </section>
+
+    <section class="card">
+      <h2>Advanced（嚴格）</h2>
+      <div class="muted">
+        一旦啟用任何條件，系統會採用「嚴格條件生成」。如條件嚴格度提高，會限制「最多可生成組數」。
+      </div>
+
+      <div class="subhead">Advanced 1｜形態 / 分佈</div>
+      <div class="grid3">
+        <div>
+          <label>連號上限（最多幾連？）</label>
+          <select id="maxConsec">
+            <option value="">不限制</option>
+            <option value="1">最多 1</option>
+            <option value="2">最多 2</option>
+            <option value="3">最多 3</option>
+          </select>
+        </div>
+
+        <div>
+          <label>單雙數</label>
+          <label class="check"><input type="checkbox" id="avoidAllOddEven" /> 避免全單 / 全雙</label>
+        </div>
+
+        <div>
+          <label>同尾數上限</label>
+          <select id="maxTail">
+            <option value="">不限制</option>
+            <option value="1">最多 1</option>
+            <option value="2">最多 2</option>
+            <option value="3">最多 3</option>
+          </select>
+        </div>
+
+        <div>
+          <label>十位段集中度（1–9 / 10–19 / 20–29 / 30–39 / 40–49）</label>
+          <select id="maxTensGroup">
+            <option value="">不限制</option>
+            <option value="2">同段最多 2</option>
+            <option value="3">同段最多 3</option>
+          </select>
+        </div>
+
+        <div>
+          <label>同顏色上限（馬會標準）</label>
+          <select id="maxColor">
+            <option value="">不限制</option>
+            <option value="2">同色最多 2</option>
+            <option value="3">同色最多 3</option>
+            <option value="4">同色最多 4</option>
+          </select>
+        </div>
+
+        <div>
+          <label>顏色</label>
+          <label class="check"><input type="checkbox" id="eachColorAtLeast1" /> 每色至少 1 粒</label>
+          <div class="row">
+            <span class="muted small">避免某色：</span>
+            <select id="avoidColor">
+              <option value="">不設定</option>
+              <option value="red">紅</option>
+              <option value="blue">藍</option>
+              <option value="green">綠</option>
+            </select>
+          </div>
+          <div class="hint warn" id="colorConflictHint"></div>
+        </div>
+
+        <div>
+          <label>總和偏向（等同平均數 24.5）</label>
+          <label class="check"><input type="checkbox" id="sumHigh" /> 總和偏大（>147）</label>
+          <label class="check"><input type="checkbox" id="sumLow" /> 總和偏小（<147）</label>
+          <div class="hint warn" id="sumConflictHint"></div>
+        </div>
+      </div>
+
+      <div class="subhead">Advanced 2｜近 N 期熱 / 冷（K=10）</div>
+
+      <div class="grid2">
+        <div>
+          <label>統計窗口 N</label>
+          <select id="statN">
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="30" selected>30</option>
+            <option value="60">60</option>
+            <option value="100">100</option>
+          </select>
+          <div class="hint" id="statHint">N 越細越貼近近期，越大越平滑。</div>
+        </div>
+
+        <div>
+          <label>統計狀態</label>
+          <div class="hint" id="statStatus">尚未載入（生成時會自動載入）</div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="miniCard">
+          <div class="miniTitle">熱號（Top 10）</div>
+          <div class="row">
+            <span class="muted small">至少</span>
+            <select id="hotMin">
+              <option value="">Off</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <span class="muted small">最多</span>
+            <select id="hotMax">
+              <option value="">Off</option>
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option>
+            </select>
+          </div>
+          <div class="hint warn" id="hotConflictHint"></div>
+          <div class="hint" id="hotListHint"></div>
+        </div>
+
+        <div class="miniCard">
+          <div class="miniTitle">冷號（Bottom 10）</div>
+          <div class="row">
+            <span class="muted small">至少</span>
+            <select id="coldMin">
+              <option value="">Off</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+            </select>
+            <span class="muted small">最多</span>
+            <select id="coldMax">
+              <option value="">Off</option>
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option>
+            </select>
+          </div>
+          <div class="hint warn" id="coldConflictHint"></div>
+          <div class="hint" id="coldListHint"></div>
+        </div>
+      </div>
+
+      <div class="subhead">Advanced｜多樣性（只在多組時生效）</div>
+      <div class="grid2">
+        <div>
+          <label>任意兩組最多重複幾粒（K）</label>
+          <select id="overlapMax">
+            <option value="">Off（不限制）</option>
+            <option value="5">5（幾乎不限制）</option>
+            <option value="4">4</option>
+            <option value="3">3</option>
+            <option value="2">2</option>
+            <option value="1">1</option>
+            <option value="0">0（完全不重複）</option>
+          </select>
+          <div class="hint" id="overlapHint"></div>
+        </div>
+
+        <div>
+          <label>系統限制</label>
+          <div class="hint" id="limitHint">未啟用條件：最多 10 組（純隨機）</div>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="card">
+      <h2>結果</h2>
+      <div id="result"></div>
+    </section>
+  </main>
+
+  <script src="/data/picker.js"></script>
+</body>
+</html>
