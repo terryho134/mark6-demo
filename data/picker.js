@@ -59,7 +59,7 @@
   const K = 10;
   const PRICE_PER_BET = 10;
 
-  // Mark Six color mapping (HKJC standard) as provided by you
+  // Mark Six color mapping (HKJC standard)
   const COLOR = {
     red: new Set([1,2,7,8,12,13,18,19,23,24,29,30,34,35,40,45,46]),
     blue: new Set([3,4,9,10,14,15,20,25,26,31,36,37,41,42,47,48]),
@@ -89,22 +89,32 @@
     statStatus.textContent = "載入中…";
     const resp = await fetch(`/api/stats?n=${n}`, { cache: "no-store" });
     const data = await resp.json();
-    if (!data.ok) throw new Error(data.error || "Failed to load stats");
 
-    const topSet = new Set((data.top10 || []).map((x) => x.n));
-    const bottomSet = new Set((data.bottom10 || []).map((x) => x.n));
+    // Backward compatible: stats.js returns { picker: {...} } in our modified version.
+    // If picker exists, use it. Otherwise fallback to old/unknown.
+    const p = data && data.picker ? data.picker : data;
+
+    if (!p || !p.ok) throw new Error((p && p.error) ? p.error : "Failed to load stats");
+
+    const top10 = p.top10 || [];
+    const bottom10 = p.bottom10 || [];
+
+    const topSet = new Set(top10.map((x) => x.n));
+    const bottomSet = new Set(bottom10.map((x) => x.n));
+
     const pack = {
-      n: data.n,
-      top10: data.top10 || [],
-      bottom10: data.bottom10 || [],
+      n: p.n || n,
+      top10,
+      bottom10,
       topSet,
       bottomSet,
-      freq: data.freq || [],
-      lastDraw: data.lastDraw || null,
+      freq: p.freq || [],
+      lastDraw: p.lastDraw || null,
     };
+
     statsCache.set(n, pack);
 
-    statStatus.textContent = `已載入：近 ${n} 期（樣本：${data.sampleSize || 0} 期）`;
+    statStatus.textContent = `已載入：近 ${pack.n} 期`;
     hotListHint.textContent = `Top10：${pack.top10.map(x => `${x.n}(${x.c})`).join(", ")}`;
     coldListHint.textContent = `Bottom10：${pack.bottom10.map(x => `${x.n}(${x.c})`).join(", ")}`;
 
@@ -147,7 +157,7 @@
       avoidColor.value ||
       sumHigh.checked ||
       sumLow.checked ||
-      statN.value && (hotMin.value || hotMax.value || coldMin.value || coldMax.value) ||
+      (statN.value && (hotMin.value || hotMax.value || coldMin.value || coldMax.value)) ||
       overlapMax.value
     );
   }
@@ -155,17 +165,14 @@
   function hardConflicts() {
     const issues = [];
 
-    // Color conflict: eachColorAtLeast1 vs avoidColor
     if (eachColorAtLeast1.checked && avoidColor.value) {
       issues.push("已選「每色至少 1 粒」，不能同時「避免某色」。");
     }
 
-    // Sum bias conflict
     if (sumHigh.checked && sumLow.checked) {
       issues.push("不能同時要求「總和偏大」及「總和偏小」。");
     }
 
-    // Hot/Cool min/max conflicts
     const hMin = hotMin.value === "" ? null : Number(hotMin.value);
     const hMax = hotMax.value === "" ? null : Number(hotMax.value);
     if (hMin !== null && hMax !== null && hMin > hMax) {
@@ -183,51 +190,47 @@
 
   // Level rules: 0 / 1 / 2 / 3 => max sets 10 / 10 / 5 / 1
   function computeLevel() {
-    if (isAdvancedBuyMode(buyMode.value)) return 3; // force 1 set for advanced presets
+    if (isAdvancedBuyMode(buyMode.value)) return 3; // advanced presets: force 1 set
     if (!anyAdvancedSelected()) return 0;
 
     let level = 1;
     let level2Count = 0;
 
-    // Advanced 1
     if (maxConsec.value) {
       const v = Number(maxConsec.value);
       if (v <= 2) { level = Math.max(level, 2); level2Count++; }
-      else { level = Math.max(level, 1); }
+      else level = Math.max(level, 1);
     }
 
     if (maxTail.value) {
       const v = Number(maxTail.value);
       if (v <= 2) { level = Math.max(level, 2); level2Count++; }
-      else { level = Math.max(level, 1); }
+      else level = Math.max(level, 1);
     }
 
     if (maxTensGroup.value) {
       const v = Number(maxTensGroup.value);
       if (v === 2) { level = Math.max(level, 2); level2Count++; }
-      else { level = Math.max(level, 1); }
+      else level = Math.max(level, 1);
     }
 
     if (maxColor.value) {
       const v = Number(maxColor.value);
       if (v <= 3) { level = Math.max(level, 2); level2Count++; }
-      else { level = Math.max(level, 1); }
+      else level = Math.max(level, 1);
     }
 
     if (eachColorAtLeast1.checked) { level = Math.max(level, 2); level2Count++; }
     if (avoidColor.value) { level = Math.max(level, 2); level2Count++; }
 
-    if (avoidAllOddEven.checked) { level = Math.max(level, 1); }
+    if (avoidAllOddEven.checked) level = Math.max(level, 1);
+    if (sumHigh.checked || sumLow.checked) level = Math.max(level, 1);
 
-    if (sumHigh.checked || sumLow.checked) { level = Math.max(level, 1); }
-
-    // Advanced 2
     if (hotMin.value || hotMax.value || coldMin.value || coldMax.value) {
       level = Math.max(level, 2);
       level2Count++;
     }
 
-    // Diversity overlapMax => levels
     if (overlapMax.value !== "") {
       const k = Number(overlapMax.value);
       if (k <= 1) level = Math.max(level, 3);
@@ -235,7 +238,6 @@
       else level = Math.max(level, 1);
     }
 
-    // Escalation: >=3 Level2 rules => Level3
     if (level2Count >= 3) level = Math.max(level, 3);
 
     return level;
@@ -250,11 +252,11 @@
   function updateSetCountOptions() {
     const issues = hardConflicts();
 
-    // show conflict hints
     colorConflictHint.textContent =
       eachColorAtLeast1.checked && avoidColor.value
         ? "衝突：已要求每色至少 1 粒，不能同時避免某色。"
         : "";
+
     sumConflictHint.textContent =
       sumHigh.checked && sumLow.checked
         ? "衝突：不能同時選「總和偏大」及「總和偏小」。"
@@ -277,7 +279,6 @@
     const level = computeLevel();
     const maxAllowed = maxSetsAllowedByLevel(level);
 
-    // Advanced preset: always 1
     if (isAdvancedBuyMode(buyMode.value)) {
       setCount.disabled = true;
       setOptions(setCount, [1]);
@@ -298,7 +299,6 @@
       }
     }
 
-    // Disable generate if hard conflicts
     btnGenerate.disabled = issues.length > 0;
     if (issues.length > 0) {
       modeLabel.innerHTML = `<span class="bad">請先解決衝突：</span><br>${issues.map(x => `• ${x}`).join("<br>")}`;
@@ -306,14 +306,12 @@
       modeLabel.textContent = "";
     }
 
-    // overlap hint
     if (overlapMax.value === "") {
       overlapHint.textContent = "Off：不限制組與組之間重複。";
     } else {
       overlapHint.textContent = `任意兩組最多重複 ${overlapMax.value} 粒。K=0 代表完全不重複（很嚴格）。`;
     }
 
-    // buy mode hint
     updateBuyModeUI();
   }
 
@@ -338,9 +336,9 @@
       buyModeHint.textContent = `${d} 膽 + ${t} 拖：共 ${bets} 注`;
       danTuoCostHint.textContent = bets > 0 ? `金額：$${bets * PRICE_PER_BET}` : "拖數不足，無法組合成 6 粒。";
     } else if (mode === "full9") {
-      buyModeHint.textContent = "9 注全餐：1 套 9 注（$90）";
+      buyModeHint.textContent = "9注全餐：1 套 9 注（$90）";
     } else if (mode === "full17") {
-      buyModeHint.textContent = "17 注全餐：1 套 17 注（$170）";
+      buyModeHint.textContent = "17注全餐：1 套 17 注（$170）";
     } else if (mode === "full5dan") {
       buyModeHint.textContent = "5 膽全餐：5 膽 + 44 拖（44 注，$440）";
     }
@@ -398,21 +396,16 @@
   }
 
   function checkAdvancedConstraints(nums, statsPack) {
-    // nums: sorted array length 6
-
-    // max consecutive
     if (maxConsec.value) {
       const lim = Number(maxConsec.value);
       if (maxConsecutiveRun(nums) > lim) return false;
     }
 
-    // avoid all odd or all even
     if (avoidAllOddEven.checked) {
       const odd = nums.filter((x) => x % 2 === 1).length;
       if (odd === 0 || odd === 6) return false;
     }
 
-    // tail max
     if (maxTail.value) {
       const lim = Number(maxTail.value);
       const tails = nums.map((x) => x % 10);
@@ -420,7 +413,6 @@
       for (const v of m.values()) if (v > lim) return false;
     }
 
-    // tens group max
     if (maxTensGroup.value) {
       const lim = Number(maxTensGroup.value);
       const groups = nums.map(tensGroupOf);
@@ -428,7 +420,6 @@
       for (const v of m.values()) if (v > lim) return false;
     }
 
-    // color rules
     const cols = nums.map(colorOf);
     const colMap = countsBy(cols);
 
@@ -445,14 +436,12 @@
       if (cols.includes(avoidColor.value)) return false;
     }
 
-    // sum bias
     const sum = nums.reduce((a, b) => a + b, 0);
     if (sumHigh.checked && !(sum > 147)) return false;
     if (sumLow.checked && !(sum < 147)) return false;
 
-    // Advanced 2 hot/cold constraints
     if (hotMin.value || hotMax.value || coldMin.value || coldMax.value) {
-      if (!statsPack) return false; // must have stats
+      if (!statsPack) return false;
 
       const topSet = statsPack.topSet;
       const bottomSet = statsPack.bottomSet;
@@ -491,7 +480,6 @@
       tags.push(`同尾≤${maxTail.value}（實際最大${maxV}）`);
     }
 
-    // tens distribution always useful when tens constraint enabled
     const groups = nums.map(tensGroupOf);
     const gm = countsBy(groups);
     if (maxTensGroup.value) {
@@ -499,7 +487,6 @@
       tags.push(`十位段≤${maxTensGroup.value}（最集中${most}）`);
     }
 
-    // color distribution always useful when any color rule enabled
     const cols = nums.map(colorOf);
     const cm = countsBy(cols);
     const red = cm.get("red") || 0;
@@ -543,7 +530,7 @@
     const overlapK = overlapMax.value === "" ? null : Number(overlapMax.value);
 
     const sets = [];
-    const ATTEMPT_LIMIT = 80000; // overall
+    const ATTEMPT_LIMIT = 80000;
     let attempts = 0;
 
     while (sets.length < target && attempts < ATTEMPT_LIMIT) {
@@ -553,7 +540,6 @@
       if (strict) {
         if (!checkAdvancedConstraints(nums, statsPack)) continue;
 
-        // diversity constraint
         if (overlapK !== null) {
           let ok = true;
           for (const prev of sets) {
@@ -587,24 +573,21 @@
       statsPack = await getStats(Number(statN.value));
     }
 
-    // Build candidate pack until it satisfies constraints (strict) or once (random)
     const PACK_ATTEMPT_LIMIT = 4000;
 
     for (let t = 0; t < PACK_ATTEMPT_LIMIT; t++) {
       let bets = [];
 
       if (mode === "full9") {
-        bets = buildPack9();
+        bets = buildPack9();     // ✅ fixed rule
       } else if (mode === "full17") {
-        bets = buildPack17();
+        bets = buildPack17();    // ✅ fixed rule
       } else if (mode === "full5dan") {
-        // 5 dan + 44 tuo => 44 bets; we generate 5 fixed dan + random 44 singles for legs
         bets = buildPack5dan();
       }
 
       if (!strict) return { bets, strict, statsPack, attempts: t + 1 };
 
-      // Strict: every bet must satisfy constraints
       let ok = true;
       for (const b of bets) {
         const nums = [...b].sort((a, c) => a - c);
@@ -616,217 +599,186 @@
     throw new Error("全餐套用嚴格條件後仍未能生成。建議取消部分條件，或先用「基本買法」。");
   }
 
+  // ---------- 9注/17注全餐：正確規則 + 驗證 ----------
   function buildPack9() {
+    // Rule:
+    // 1) Bets 1-8: 48 numbers no-repeat across these 8 bets
+    // 2) Bet 9: the remaining 1 number + 5 numbers chosen from the 48 (duplicates)
+    // Result distribution: 44 numbers appear once, 5 numbers appear twice.
     const pool = Array.from({ length: 49 }, (_, i) => i + 1);
     shuffle(pool);
-    const first48 = pool.slice(0, 48);
-    const last = pool[48];
+
+    const A48 = pool.slice(0, 48);
+    const x = pool[48];
 
     const bets = [];
     for (let i = 0; i < 8; i++) {
-      const b = first48.slice(i * 6, i * 6 + 6).sort((a, c) => a - c);
-      bets.push(b);
+      bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
     }
-    // bet9: last + 5 picked from first48
-    const pick = [...first48];
-    shuffle(pick);
-    const b9 = [last, ...pick.slice(0, 5)].sort((a, c) => a - c);
-    bets.push(b9);
+
+    const tmp = [...A48];
+    shuffle(tmp);
+    const R5 = tmp.slice(0, 5);
+
+    bets.push([x, ...R5].sort((a, b) => a - b));
+
+    // Validate (safety)
+    if (!validatePack9(bets)) {
+      // extremely unlikely unless bug; regenerate recursively
+      return buildPack9();
+    }
     return bets;
   }
 
   function buildPack17() {
-    // Practical "17-set coverage": 8 bets cover 48 numbers, bet9 uses remaining + 5 repeats,
-    // then another 8 bets from a reshuffle of the same 48 numbers.
-    const pool = Array.from({ length: 49 }, (_, i) => i + 1);
-    shuffle(pool);
-    const first48 = pool.slice(0, 48);
-    const last = pool[48];
+    // Confirmed rule (your final spec):
+    // - First 8 bets: 48 numbers no-repeat
+    // - Bet 9: remaining x + 5 numbers (R5) chosen from first 48 (duplicates)
+    // - Bets 10-16: choose 42 numbers from the 44 "appear-once" numbers (i.e. exclude R5),
+    //              distribute into 7 bets of 6 (no repeats), leaving L2 (2 numbers) still once.
+    // - Bet 17: L2 + 4 numbers randomly selected from the other 47 numbers (exclude L2).
+    // Result distribution: 45 numbers appear twice, 4 numbers appear three times.
+    const MAX_TRY = 200; // local retries for safety
+    for (let attempt = 0; attempt < MAX_TRY; attempt++) {
+      const pool = Array.from({ length: 49 }, (_, i) => i + 1);
+      shuffle(pool);
 
-    const bets = [];
-    // round 1
-    for (let i = 0; i < 8; i++) {
-      bets.push(first48.slice(i * 6, i * 6 + 6).sort((a, c) => a - c));
+      const A48 = pool.slice(0, 48);
+      const x = pool[48];
+
+      // Bets 1-8
+      const bets = [];
+      for (let i = 0; i < 8; i++) {
+        bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
+      }
+
+      // Choose R5 from A48
+      const tmp = [...A48];
+      shuffle(tmp);
+      const R5 = tmp.slice(0, 5);
+      const R5set = new Set(R5);
+
+      // Bet 9 = x + R5
+      bets.push([x, ...R5].sort((a, b) => a - b));
+
+      // The 44 "appear-once after 9 bets" numbers are U \ R5
+      const U49 = Array.from({ length: 49 }, (_, i) => i + 1);
+      const S44 = U49.filter((n) => !R5set.has(n)); // size 44
+
+      // Pick T42 from S44 for bets 10-16
+      const sTmp = [...S44];
+      shuffle(sTmp);
+      const T42 = sTmp.slice(0, 42);
+      const L2 = sTmp.slice(42); // exactly 2
+
+      // Bets 10-16: chunk T42 into 7 bets
+      for (let i = 0; i < 7; i++) {
+        bets.push(T42.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
+      }
+
+      // Bet 17: L2 + 4 from other 47 numbers (exclude L2)
+      const L2set = new Set(L2);
+      const rest47 = U49.filter((n) => !L2set.has(n)); // size 47
+      shuffle(rest47);
+      const pick4 = rest47.slice(0, 4);
+
+      bets.push([...L2, ...pick4].sort((a, b) => a - b));
+
+      // Validate distribution AND the key constraint:
+      // bets 10-16 must NOT include any R5 number.
+      if (!validatePack17(bets, R5set)) continue;
+
+      return bets;
     }
-    // bet9
-    const pick = [...first48];
-    shuffle(pick);
-    bets.push([last, ...pick.slice(0, 5)].sort((a, c) => a - c));
 
-    // round 2: reshuffle 48 and group into 8 bets
-    const second = [...first48];
-    shuffle(second);
-    for (let i = 0; i < 8; i++) {
-      bets.push(second.slice(i * 6, i * 6 + 6).sort((a, c) => a - c));
-    }
-    return bets;
+    // If somehow failed all tries, fall back to a deterministic safe rebuild
+    return buildPack17Fallback();
   }
 
-  function buildPack5dan() {
-    // 5 fixed dan numbers + 44 bets of (dan + 5 legs) doesn't map cleanly into single 6-number bets,
-    // so for MVP we generate a representative "5 dan full meal" as 44 bets:
-    // pick 5 dan; then for each leg number (44), create a 6-number bet: 5 dan + that leg.
-    const pool = Array.from({ length: 49 }, (_, i) => i + 1);
-    shuffle(pool);
-    const dan = pool.slice(0, 5).sort((a, c) => a - c);
-    const legs = pool.slice(5).sort((a, c) => a - c); // 44 numbers
-    const bets = legs.map((x) => [...dan, x].sort((a, c) => a - c));
-    return bets;
-  }
+  function buildPack17Fallback() {
+    // Deterministic-style safe fallback (still random but more constrained):
+    // Force selection paths that always satisfy the rule.
+    while (true) {
+      const pool = Array.from({ length: 49 }, (_, i) => i + 1);
+      shuffle(pool);
 
-  // ---------- Render ----------
-  function clearResult() {
-    result.innerHTML = "";
-  }
+      const A48 = pool.slice(0, 48);
+      const x = pool[48];
 
-  function renderNormal(sets, meta) {
-    clearResult();
-
-    const head = document.createElement("div");
-    head.className = "muted";
-    head.innerHTML = meta.strict
-      ? `生成方式：<b>嚴格條件生成</b>（Level ${meta.level}，最多 ${meta.maxAllowed} 組）｜已生成 ${sets.length} 組｜嘗試 ${meta.attempts} 次`
-      : `生成方式：<b>純隨機</b>｜已生成 ${sets.length} 組`;
-    result.appendChild(head);
-
-    sets.forEach((nums, idx) => {
-      const box = document.createElement("div");
-      box.className = "resultSet";
-      box.innerHTML = `<div><b>第 ${idx + 1} 組</b></div>`;
-
-      const numsRow = document.createElement("div");
-      numsRow.className = "nums";
-      nums.forEach((n) => {
-        const b = document.createElement("div");
-        b.className = "ball";
-        b.textContent = String(n).padStart(2, "0");
-        numsRow.appendChild(b);
-      });
-      box.appendChild(numsRow);
-
-      const tags = buildTags(nums, meta.statsPack);
-      if (tags.length) {
-        const tagsRow = document.createElement("div");
-        tagsRow.className = "tags";
-        for (const t of tags) {
-          const tag = document.createElement("span");
-          tag.className = "tag";
-          tag.textContent = t;
-          tagsRow.appendChild(tag);
-        }
-        box.appendChild(tagsRow);
+      const bets = [];
+      for (let i = 0; i < 8; i++) {
+        bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
       }
 
-      result.appendChild(box);
-    });
-  }
+      const tmp = [...A48];
+      shuffle(tmp);
+      const R5 = tmp.slice(0, 5);
+      const R5set = new Set(R5);
 
-  function renderPack(mode, bets, meta) {
-    clearResult();
+      bets.push([x, ...R5].sort((a, b) => a - b));
 
-    const title =
-      mode === "full9" ? "9注全餐（1 套）" :
-      mode === "full17" ? "17注全餐（1 套）" :
-      "5膽全餐（1 套）";
+      const U49 = Array.from({ length: 49 }, (_, i) => i + 1);
+      const S44 = U49.filter((n) => !R5set.has(n));
+      shuffle(S44);
 
-    const head = document.createElement("div");
-    head.className = "muted";
-    head.innerHTML = meta.strict
-      ? `生成方式：<b>${title}</b> + 嚴格條件（已套用）｜嘗試 ${meta.attempts} 次`
-      : `生成方式：<b>${title}</b>（純隨機）`;
-    result.appendChild(head);
+      const T42 = S44.slice(0, 42);
+      const L2 = S44.slice(42); // 2 numbers
 
-    bets.forEach((nums, idx) => {
-      const box = document.createElement("div");
-      box.className = "resultSet";
-      box.innerHTML = `<div><b>第 ${idx + 1} 注</b></div>`;
-
-      const numsRow = document.createElement("div");
-      numsRow.className = "nums";
-      nums.forEach((n) => {
-        const b = document.createElement("div");
-        b.className = "ball";
-        b.textContent = String(n).padStart(2, "0");
-        numsRow.appendChild(b);
-      });
-      box.appendChild(numsRow);
-
-      const tags = buildTags(nums, meta.statsPack);
-      if (tags.length) {
-        const tagsRow = document.createElement("div");
-        tagsRow.className = "tags";
-        for (const t of tags) {
-          const tag = document.createElement("span");
-          tag.className = "tag";
-          tag.textContent = t;
-          tagsRow.appendChild(tag);
-        }
-        box.appendChild(tagsRow);
+      for (let i = 0; i < 7; i++) {
+        bets.push(T42.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
       }
 
-      result.appendChild(box);
-    });
-  }
+      const L2set = new Set(L2);
+      const rest47 = U49.filter((n) => !L2set.has(n));
+      shuffle(rest47);
+      const pick4 = rest47.slice(0, 4);
 
-  // ---------- Actions ----------
-  async function onGenerate() {
-    try {
-      btnGenerate.disabled = true;
+      bets.push([...L2, ...pick4].sort((a, b) => a - b));
 
-      // If Advanced2 enabled, prefetch stats so UI can show lists
-      if (hotMin.value || hotMax.value || coldMin.value || coldMax.value) {
-        const n = Number(statN.value);
-        if (!N_ALLOWED.includes(n)) throw new Error("Invalid N");
-        await getStats(n);
-      }
-
-      const mode = buyMode.value;
-
-      if (isAdvancedBuyMode(mode)) {
-        const pack = await generateFullMeal(mode);
-        renderPack(mode, pack.bets, pack);
-        showToast("已生成 1 套注單");
-        return;
-      }
-
-      const desiredSets = Number(setCount.value || 1);
-      const out = await generateNormalSets(desiredSets);
-      renderNormal(out.sets, out);
-
-      showToast(out.strict ? "已按條件生成" : "已純隨機生成");
-    } catch (e) {
-      clearResult();
-      const msg = (e && e.message) ? e.message : String(e);
-      const box = document.createElement("div");
-      box.className = "resultSet";
-      box.innerHTML = `<div class="bad"><b>未能生成</b></div><div class="muted" style="margin-top:6px">${escapeHtml(msg)}</div>`;
-      result.appendChild(box);
-      showToast("生成失敗（請放寬條件）");
-    } finally {
-      btnGenerate.disabled = false;
+      if (validatePack17(bets, R5set)) return bets;
     }
   }
 
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, (c) => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
-    }[c]));
+  function validatePack9(bets) {
+    if (!Array.isArray(bets) || bets.length !== 9) return false;
+    const cnt = Array(50).fill(0);
+    for (const b of bets) {
+      if (!Array.isArray(b) || b.length !== 6) return false;
+      const s = new Set(b);
+      if (s.size !== 6) return false;
+      for (const n of b) {
+        if (!Number.isInteger(n) || n < 1 || n > 49) return false;
+        cnt[n] += 1;
+      }
+    }
+    let ones = 0, twos = 0, other = 0;
+    for (let i = 1; i <= 49; i++) {
+      if (cnt[i] === 1) ones++;
+      else if (cnt[i] === 2) twos++;
+      else other++;
+    }
+    // Expect: 44 numbers appear once, 5 numbers appear twice
+    return ones === 44 && twos === 5 && other === 0;
   }
 
-  // ---------- Events ----------
-  const inputs = [
-    buyMode, setCount, multiN, danN, tuoN,
-    maxConsec, avoidAllOddEven, maxTail, maxTensGroup, maxColor,
-    eachColorAtLeast1, avoidColor, sumHigh, sumLow,
-    statN, hotMin, hotMax, coldMin, coldMax,
-    overlapMax
-  ];
-  inputs.forEach((x) => x.addEventListener("change", updateSetCountOptions));
+  function validatePack17(bets, R5set) {
+    if (!Array.isArray(bets) || bets.length !== 17) return false;
+    const cnt = Array(50).fill(0);
 
-  btnGenerate.addEventListener("click", onGenerate);
-  btnClear.addEventListener("click", () => { clearResult(); showToast("已清空"); });
+    // Basic shape validation
+    for (const b of bets) {
+      if (!Array.isArray(b) || b.length !== 6) return false;
+      const s = new Set(b);
+      if (s.size !== 6) return false;
+      for (const n of b) {
+        if (!Number.isInteger(n) || n < 1 || n > 49) return false;
+        cnt[n] += 1;
+      }
+    }
 
-  // init set count 1..10
-  setOptions(setCount, Array.from({ length: 10 }, (_, i) => i + 1));
-  updateSetCountOptions();
-})();
+    // Key rule: bets 10-16 must not include R5 numbers
+    // index: 0..16 => bets10-16 are indices 9..15
+    if (R5set && typeof R5set.has === "function") {
+      for (let i = 9; i <= 15; i++) {
+        for (const n of bets[i]) {
+          if (R5set.has(n))
