@@ -56,8 +56,8 @@
 
   // ---------- Constants ----------
   const N_ALLOWED = [10, 20, 30, 60, 100];
-  const K = 10;
   const PRICE_PER_BET = 10;
+  const AVG = 24.5;
 
   // Mark Six color mapping (HKJC standard)
   const COLOR = {
@@ -82,7 +82,7 @@
   }
 
   // ---------- Stats cache ----------
-  const statsCache = new Map(); // n -> {topSet, bottomSet, top10, bottom10, freq}
+  const statsCache = new Map();
   async function getStats(n) {
     if (statsCache.has(n)) return statsCache.get(n);
 
@@ -110,11 +110,9 @@
     };
 
     statsCache.set(n, pack);
-
     statStatus.textContent = `已載入：近 ${pack.n} 期`;
     hotListHint.textContent = `Top10：${pack.top10.map(x => `${x.n}(${x.c})`).join(", ")}`;
     coldListHint.textContent = `Bottom10：${pack.bottom10.map(x => `${x.n}(${x.c})`).join(", ")}`;
-
     return pack;
   }
 
@@ -126,7 +124,6 @@
     showToast._t = setTimeout(() => toast.classList.add("hidden"), 2200);
   }
 
-  // Support labeled options
   function setOptions2(select, items, keepIfPossible = true) {
     const cur = select.value;
     select.innerHTML = "";
@@ -138,9 +135,9 @@
       opt.textContent = label;
       select.appendChild(opt);
     }
-    if (keepIfPossible && items.map(x => String(typeof x === "object" ? x.value : x)).includes(cur)) {
-      select.value = cur;
-    } else {
+    const values = items.map(x => String(typeof x === "object" ? x.value : x));
+    if (keepIfPossible && values.includes(cur)) select.value = cur;
+    else {
       const firstVal = (items[0] && typeof items[0] === "object") ? String(items[0].value) : String(items[0] ?? "");
       select.value = firstVal;
     }
@@ -176,7 +173,6 @@
     if (eachColorAtLeast1.checked && avoidColor.value) {
       issues.push("已選「每色至少 1 粒」，不能同時「避免某色」。");
     }
-
     if (sumHigh.checked && sumLow.checked) {
       issues.push("不能同時要求「總和偏大」及「總和偏小」。");
     }
@@ -196,9 +192,8 @@
     return issues;
   }
 
-  // Level rules: 0 / 1 / 2 / 3 => max sets 10 / 10 / 5 / 1
   function computeLevel() {
-    if (isAdvancedBuyMode(buyMode.value)) return 3; // advanced presets: force 1 set
+    if (isAdvancedBuyMode(buyMode.value)) return 3;
     if (!anyAdvancedSelected()) return 0;
 
     let level = 1;
@@ -207,25 +202,18 @@
     if (maxConsec.value) {
       const v = Number(maxConsec.value);
       if (v <= 2) { level = Math.max(level, 2); level2Count++; }
-      else level = Math.max(level, 1);
     }
-
     if (maxTail.value) {
       const v = Number(maxTail.value);
       if (v <= 2) { level = Math.max(level, 2); level2Count++; }
-      else level = Math.max(level, 1);
     }
-
     if (maxTensGroup.value) {
       const v = Number(maxTensGroup.value);
       if (v === 2) { level = Math.max(level, 2); level2Count++; }
-      else level = Math.max(level, 1);
     }
-
     if (maxColor.value) {
       const v = Number(maxColor.value);
       if (v <= 3) { level = Math.max(level, 2); level2Count++; }
-      else level = Math.max(level, 1);
     }
 
     if (eachColorAtLeast1.checked) { level = Math.max(level, 2); level2Count++; }
@@ -243,11 +231,9 @@
       const k = Number(overlapMax.value);
       if (k <= 1) level = Math.max(level, 3);
       else if (k <= 3) { level = Math.max(level, 2); level2Count++; }
-      else level = Math.max(level, 1);
     }
 
     if (level2Count >= 3) level = Math.max(level, 3);
-
     return level;
   }
 
@@ -259,29 +245,20 @@
 
   // ---------- Basic: dynamic options ----------
   function initBasicSelectOptions() {
-    // 複式：7–15
-    setOptions2(multiN, Array.from({ length: 9 }, (_, i) => 7 + i));
-
-    // 膽：1–5（六合彩最多 5 膽）
+    setOptions2(multiN, Array.from({ length: 9 }, (_, i) => 7 + i)); // 7–15
     setOptions2(danN, [1, 2, 3, 4, 5]);
-
-    // 拖：由 danN 決定（並加入全餐）
     updateTuoOptions();
   }
 
   function updateTuoOptions() {
     const d = Number(danN.value || 1);
-
-    // 最少拖數一般為 6-d；但你指定：選 5 膽要有 2 腳選項
     const minTuo = (d === 5) ? 2 : (6 - d);
     const maxTuo = 49 - d;
 
-    // 生成 options：由 min 開始列一段，再加幾個常用，最後加全餐
     const opts = [];
     const startEnd = Math.min(minTuo + 12, maxTuo);
     for (let t = minTuo; t <= startEnd; t++) opts.push({ value: t, label: String(t) });
 
-    // 常用跳點（避免 dropdown 太長）
     const jumps = [15, 20, 25, 30, 35, 40];
     for (const j of jumps) {
       if (j >= minTuo && j <= maxTuo && !opts.some(o => o.value === j)) {
@@ -292,15 +269,12 @@
     if (!opts.some(o => o.value === maxTuo)) {
       opts.push({ value: maxTuo, label: `${maxTuo}（全餐）` });
     } else {
-      // 如果 maxTuo 已在前段範圍內，就替換成「全餐」label
       const idx = opts.findIndex(o => o.value === maxTuo);
       opts[idx] = { value: maxTuo, label: `${maxTuo}（全餐）` };
     }
 
-    // 盡量保留原本選擇
     setOptions2(tuoN, opts, true);
 
-    // 如果原本值太細（例如由 2 膽轉去 5 膽），就自動拉返去 min
     const cur = Number(tuoN.value || minTuo);
     if (cur < minTuo) tuoN.value = String(minTuo);
     if (cur > maxTuo) tuoN.value = String(maxTuo);
@@ -372,6 +346,23 @@
     updateBuyModeUI();
   }
 
+  // ---------- Pricing helpers ----------
+  function nCk(n, k) {
+    if (k < 0 || k > n) return 0;
+    k = Math.min(k, n - k);
+    let num = 1, den = 1;
+    for (let i = 1; i <= k; i++) {
+      num *= (n - (k - i));
+      den *= i;
+    }
+    return Math.round(num / den);
+  }
+
+  function danTuoBets(d, t) {
+    const need = 6 - d;
+    return t >= need ? nCk(t, need) : 0;
+  }
+
   function updateBuyModeUI() {
     const mode = buyMode.value;
     multiBox.classList.toggle("hidden", mode !== "multi");
@@ -388,8 +379,7 @@
     } else if (mode === "danTuo") {
       const d = Number(danN.value);
       const t = Number(tuoN.value);
-      const need = 6 - d;
-      const bets = t >= need ? nCk(t, need) : 0;
+      const bets = danTuoBets(d, t);
       buyModeHint.textContent = `${d} 膽 + ${t} 拖：共 ${bets} 注`;
       danTuoCostHint.textContent = bets > 0 ? `金額：$${bets * PRICE_PER_BET}` : "拖數不足，無法組合成 6 粒。";
     } else if (mode === "full9") {
@@ -397,33 +387,26 @@
     } else if (mode === "full17") {
       buyModeHint.textContent = "17注全餐：1 套 17 注（$170）";
     } else if (mode === "full5dan") {
-      buyModeHint.textContent = "5 膽全餐：5 膽 + 44 拖（44 注，$440）";
+      buyModeHint.textContent = "5 膽全餐：5 膽 + 44 腳（44 注，$440）";
     }
   }
 
-  function nCk(n, k) {
-    if (k < 0 || k > n) return 0;
-    k = Math.min(k, n - k);
-    let num = 1, den = 1;
-    for (let i = 1; i <= k; i++) {
-      num *= (n - (k - i));
-      den *= i;
-    }
-    return Math.round(num / den);
-  }
-
-  // ---------- Generator helpers ----------
-  function sample6() {
-    const pool = Array.from({ length: 49 }, (_, i) => i + 1);
-    shuffle(pool);
-    return pool.slice(0, 6).sort((a, b) => a - b);
-  }
-
+  // ---------- Random helpers ----------
   function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
+  }
+
+  function sampleDistinct(k, excludeSet = null) {
+    const pool = [];
+    for (let i = 1; i <= 49; i++) {
+      if (excludeSet && excludeSet.has(i)) continue;
+      pool.push(i);
+    }
+    shuffle(pool);
+    return pool.slice(0, k).sort((a, b) => a - b);
   }
 
   function overlapCount(a, b) {
@@ -433,10 +416,10 @@
     return c;
   }
 
-  function maxConsecutiveRun(nums) {
+  function maxConsecutiveRun(sortedNums) {
     let best = 1, cur = 1;
-    for (let i = 1; i < nums.length; i++) {
-      if (nums[i] === nums[i - 1] + 1) {
+    for (let i = 1; i < sortedNums.length; i++) {
+      if (sortedNums[i] === sortedNums[i - 1] + 1) {
         cur++;
         best = Math.max(best, cur);
       } else {
@@ -452,32 +435,34 @@
     return m;
   }
 
-  function checkAdvancedConstraints(nums, statsPack) {
+  // ---------- Constraints ----------
+  function checkAdvancedConstraints(numsSorted, statsPack) {
+    // numsSorted can be 6 / 7–15 / dan+tuo length, etc.
     if (maxConsec.value) {
       const lim = Number(maxConsec.value);
-      if (maxConsecutiveRun(nums) > lim) return false;
+      if (maxConsecutiveRun(numsSorted) > lim) return false;
     }
 
     if (avoidAllOddEven.checked) {
-      const odd = nums.filter((x) => x % 2 === 1).length;
-      if (odd === 0 || odd === 6) return false;
+      const odd = numsSorted.filter((x) => x % 2 === 1).length;
+      if (odd === 0 || odd === numsSorted.length) return false;
     }
 
     if (maxTail.value) {
       const lim = Number(maxTail.value);
-      const tails = nums.map((x) => x % 10);
+      const tails = numsSorted.map((x) => x % 10);
       const m = countsBy(tails);
       for (const v of m.values()) if (v > lim) return false;
     }
 
     if (maxTensGroup.value) {
       const lim = Number(maxTensGroup.value);
-      const groups = nums.map(tensGroupOf);
+      const groups = numsSorted.map(tensGroupOf);
       const m = countsBy(groups);
       for (const v of m.values()) if (v > lim) return false;
     }
 
-    const cols = nums.map(colorOf);
+    const cols = numsSorted.map(colorOf);
     const colMap = countsBy(cols);
 
     if (maxColor.value) {
@@ -493,9 +478,10 @@
       if (cols.includes(avoidColor.value)) return false;
     }
 
-    const sum = nums.reduce((a, b) => a + b, 0);
-    if (sumHigh.checked && !(sum > 147)) return false;
-    if (sumLow.checked && !(sum < 147)) return false;
+    const sum = numsSorted.reduce((a, b) => a + b, 0);
+    const pivot = AVG * numsSorted.length;
+    if (sumHigh.checked && !(sum > pivot)) return false;
+    if (sumLow.checked && !(sum < pivot)) return false;
 
     if (hotMin.value || hotMax.value || coldMin.value || coldMax.value) {
       if (!statsPack) return false;
@@ -503,8 +489,8 @@
       const topSet = statsPack.topSet;
       const bottomSet = statsPack.bottomSet;
 
-      const hotHit = nums.filter((x) => topSet.has(x)).length;
-      const coldHit = nums.filter((x) => bottomSet.has(x)).length;
+      const hotHit = numsSorted.filter((x) => topSet.has(x)).length;
+      const coldHit = numsSorted.filter((x) => bottomSet.has(x)).length;
 
       const hMin = hotMin.value === "" ? null : Number(hotMin.value);
       const hMax = hotMax.value === "" ? null : Number(hotMax.value);
@@ -520,31 +506,31 @@
     return true;
   }
 
-  function buildTags(nums, statsPack) {
+  function buildTags(numsSorted, statsPack) {
     const tags = [];
 
-    if (maxConsec.value) tags.push(`連號≤${maxConsec.value}（實際${maxConsecutiveRun(nums)}）`);
+    if (maxConsec.value) tags.push(`連號≤${maxConsec.value}（實際${maxConsecutiveRun(numsSorted)}）`);
 
     if (avoidAllOddEven.checked) {
-      const odd = nums.filter((x) => x % 2 === 1).length;
-      tags.push(`奇偶：${odd}單${6 - odd}雙（避免全單/全雙）`);
+      const odd = numsSorted.filter((x) => x % 2 === 1).length;
+      tags.push(`奇偶：${odd}單${numsSorted.length - odd}雙（避免全單/全雙）`);
     }
 
     if (maxTail.value) {
-      const tails = nums.map((x) => x % 10);
+      const tails = numsSorted.map((x) => x % 10);
       const m = countsBy(tails);
       const maxV = Math.max(...m.values());
       tags.push(`同尾≤${maxTail.value}（實際最大${maxV}）`);
     }
 
-    const groups = nums.map(tensGroupOf);
-    const gm = countsBy(groups);
     if (maxTensGroup.value) {
+      const groups = numsSorted.map(tensGroupOf);
+      const gm = countsBy(groups);
       const most = Math.max(...gm.values());
       tags.push(`十位段≤${maxTensGroup.value}（最集中${most}）`);
     }
 
-    const cols = nums.map(colorOf);
+    const cols = numsSorted.map(colorOf);
     const cm = countsBy(cols);
     const red = cm.get("red") || 0;
     const blue = cm.get("blue") || 0;
@@ -556,20 +542,49 @@
     if (maxColor.value) tags.push(`同色≤${maxColor.value} ✅`);
     if (avoidColor.value) tags.push(`避開${avoidColor.value === "red" ? "紅" : avoidColor.value === "blue" ? "藍" : "綠"}色 ✅`);
 
-    const sum = nums.reduce((a, b) => a + b, 0);
-    if (sumHigh.checked) tags.push(`總和>${147} ✅（${sum}）`);
-    if (sumLow.checked) tags.push(`總和<${147} ✅（${sum}）`);
+    const sum = numsSorted.reduce((a, b) => a + b, 0);
+    const pivot = AVG * numsSorted.length;
+    if (sumHigh.checked) tags.push(`平均>${AVG} ✅（總和${sum}）`);
+    if (sumLow.checked) tags.push(`平均<${AVG} ✅（總和${sum}）`);
 
     if (statsPack && (hotMin.value || hotMax.value || coldMin.value || coldMax.value)) {
-      const hotHit = nums.filter((x) => statsPack.topSet.has(x)).length;
-      const coldHit = nums.filter((x) => statsPack.bottomSet.has(x)).length;
+      const hotHit = numsSorted.filter((x) => statsPack.topSet.has(x)).length;
+      const coldHit = numsSorted.filter((x) => statsPack.bottomSet.has(x)).length;
       tags.push(`近${statsPack.n}期：Top10命中${hotHit}，Bottom10命中${coldHit}`);
     }
 
     return tags;
   }
 
-  async function generateNormalSets(desiredSets) {
+  // ---------- Ticket generators ----------
+  function buildTicketByMode(mode) {
+    if (mode === "single") {
+      const nums = sampleDistinct(6);
+      return { kind: "single", nums, keyNums: nums };
+    }
+
+    if (mode === "multi") {
+      const n = Number(multiN.value);
+      const nums = sampleDistinct(n);
+      return { kind: "multi", nums, keyNums: nums };
+    }
+
+    if (mode === "danTuo") {
+      const d = Number(danN.value);
+      const t = Number(tuoN.value);
+      const dan = sampleDistinct(d);
+      const danSet = new Set(dan);
+      const tuo = sampleDistinct(t, danSet);
+      const all = [...dan, ...tuo].sort((a, b) => a - b);
+      return { kind: "danTuo", dan, tuo, all, keyNums: all };
+    }
+
+    // should not hit here for full meals
+    const nums = sampleDistinct(6);
+    return { kind: "single", nums, keyNums: nums };
+  }
+
+  async function generateNormalTickets(desiredSets) {
     const strict = anyAdvancedSelected();
     const issues = hardConflicts();
     if (issues.length) throw new Error(issues.join(" / "));
@@ -580,46 +595,47 @@
 
     let statsPack = null;
     if (strict && (hotMin.value || hotMax.value || coldMin.value || coldMax.value)) {
-      const n = Number(statN.value);
-      statsPack = await getStats(n);
+      statsPack = await getStats(Number(statN.value));
     }
 
     const overlapK = overlapMax.value === "" ? null : Number(overlapMax.value);
 
-    const sets = [];
-    const ATTEMPT_LIMIT = 80000;
+    const tickets = [];
+    const ATTEMPT_LIMIT = 120000;
     let attempts = 0;
 
-    while (sets.length < target && attempts < ATTEMPT_LIMIT) {
+    while (tickets.length < target && attempts < ATTEMPT_LIMIT) {
       attempts++;
-      const nums = sample6();
+
+      const t = buildTicketByMode(buyMode.value);
+      const numsSorted = (t.keyNums || []).slice().sort((a, b) => a - b);
 
       if (strict) {
-        if (!checkAdvancedConstraints(nums, statsPack)) continue;
+        if (!checkAdvancedConstraints(numsSorted, statsPack)) continue;
 
         if (overlapK !== null) {
           let ok = true;
-          for (const prev of sets) {
-            if (overlapCount(prev, nums) > overlapK) { ok = false; break; }
+          for (const prev of tickets) {
+            if (overlapCount(prev.keyNums, numsSorted) > overlapK) { ok = false; break; }
           }
           if (!ok) continue;
         }
       }
 
-      sets.push(nums);
+      tickets.push(t);
     }
 
-    if (sets.length < target) {
+    if (tickets.length < target) {
       throw new Error(
-        `條件較嚴格，嘗試 ${attempts} 次後仍未能生成足夠組合（已生成 ${sets.length}/${target}）。` +
+        `條件較嚴格，嘗試 ${attempts} 次後仍未能生成足夠組合（已生成 ${tickets.length}/${target}）。` +
         ` 建議：降低組數、放寬多樣性、或取消部分限制。`
       );
     }
 
-    return { sets, strict, statsPack, level, maxAllowed, attempts };
+    return { tickets, strict, statsPack, level, maxAllowed, attempts };
   }
 
-  // Full-meal presets
+  // ---------- Full meal generators ----------
   async function generateFullMeal(mode) {
     const strict = anyAdvancedSelected();
     const issues = hardConflicts();
@@ -633,30 +649,40 @@
     const PACK_ATTEMPT_LIMIT = 4000;
 
     for (let t = 0; t < PACK_ATTEMPT_LIMIT; t++) {
-      let bets = [];
+      if (mode === "full5dan") {
+        const dan = sampleDistinct(5);
+        const danSet = new Set(dan);
+        const legs = [];
+        for (let i = 1; i <= 49; i++) if (!danSet.has(i)) legs.push(i);
+        const all = [...dan, ...legs].sort((a, b) => a - b);
 
-      if (mode === "full9") {
-        bets = buildPack9();
-      } else if (mode === "full17") {
-        bets = buildPack17();
-      } else if (mode === "full5dan") {
-        bets = buildPack5dan();
+        if (!strict) return { kind: "full5dan", dan, legs, all, strict, statsPack, attempts: t + 1 };
+
+        // strict: apply constraints to the whole selected set (dan+legs)
+        if (checkAdvancedConstraints(all, statsPack)) {
+          return { kind: "full5dan", dan, legs, all, strict, statsPack, attempts: t + 1 };
+        }
+        continue;
       }
 
-      if (!strict) return { bets, strict, statsPack, attempts: t + 1 };
+      let bets = [];
+      if (mode === "full9") bets = buildPack9();
+      if (mode === "full17") bets = buildPack17();
+
+      if (!strict) return { kind: mode, bets, strict, statsPack, attempts: t + 1 };
 
       let ok = true;
       for (const b of bets) {
         const nums = [...b].sort((a, c) => a - c);
         if (!checkAdvancedConstraints(nums, statsPack)) { ok = false; break; }
       }
-      if (ok) return { bets, strict, statsPack, attempts: t + 1 };
+      if (ok) return { kind: mode, bets, strict, statsPack, attempts: t + 1 };
     }
 
     throw new Error("全餐套用嚴格條件後仍未能生成。建議取消部分條件，或先用「基本買法」。");
   }
 
-  // ---------- 9注/17注全餐：正確規則 + 驗證 ----------
+  // ---------- 9/17 packs (already validated correct) ----------
   function buildPack9() {
     const pool = Array.from({ length: 49 }, (_, i) => i + 1);
     shuffle(pool);
@@ -665,16 +691,13 @@
     const x = pool[48];
 
     const bets = [];
-    for (let i = 0; i < 8; i++) {
-      bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
-    }
+    for (let i = 0; i < 8; i++) bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
 
     const tmp = [...A48];
     shuffle(tmp);
     const R5 = tmp.slice(0, 5);
 
     bets.push([x, ...R5].sort((a, b) => a - b));
-
     if (!validatePack9(bets)) return buildPack9();
     return bets;
   }
@@ -689,9 +712,7 @@
       const x = pool[48];
 
       const bets = [];
-      for (let i = 0; i < 8; i++) {
-        bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
-      }
+      for (let i = 0; i < 8; i++) bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
 
       const tmp = [...A48];
       shuffle(tmp);
@@ -706,11 +727,9 @@
       const sTmp = [...S44];
       shuffle(sTmp);
       const T42 = sTmp.slice(0, 42);
-      const L2 = sTmp.slice(42); // 2 numbers
+      const L2 = sTmp.slice(42);
 
-      for (let i = 0; i < 7; i++) {
-        bets.push(T42.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
-      }
+      for (let i = 0; i < 7; i++) bets.push(T42.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
 
       const L2set = new Set(L2);
       const rest47 = U49.filter((n) => !L2set.has(n));
@@ -718,53 +737,9 @@
       const pick4 = rest47.slice(0, 4);
 
       bets.push([...L2, ...pick4].sort((a, b) => a - b));
-
-      if (!validatePack17(bets, R5set)) continue;
-      return bets;
-    }
-    return buildPack17Fallback();
-  }
-
-  function buildPack17Fallback() {
-    while (true) {
-      const pool = Array.from({ length: 49 }, (_, i) => i + 1);
-      shuffle(pool);
-
-      const A48 = pool.slice(0, 48);
-      const x = pool[48];
-
-      const bets = [];
-      for (let i = 0; i < 8; i++) {
-        bets.push(A48.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
-      }
-
-      const tmp = [...A48];
-      shuffle(tmp);
-      const R5 = tmp.slice(0, 5);
-      const R5set = new Set(R5);
-
-      bets.push([x, ...R5].sort((a, b) => a - b));
-
-      const U49 = Array.from({ length: 49 }, (_, i) => i + 1);
-      const S44 = U49.filter((n) => !R5set.has(n));
-      shuffle(S44);
-
-      const T42 = S44.slice(0, 42);
-      const L2 = S44.slice(42);
-
-      for (let i = 0; i < 7; i++) {
-        bets.push(T42.slice(i * 6, i * 6 + 6).sort((a, b) => a - b));
-      }
-
-      const L2set = new Set(L2);
-      const rest47 = U49.filter((n) => !L2set.has(n));
-      shuffle(rest47);
-      const pick4 = rest47.slice(0, 4);
-
-      bets.push([...L2, ...pick4].sort((a, b) => a - b));
-
       if (validatePack17(bets, R5set)) return bets;
     }
+    return buildPack17(); // retry hard if extremely unlucky
   }
 
   function validatePack9(bets) {
@@ -803,13 +778,7 @@
     }
 
     // bets 10-16 indices 9..15 must not include R5
-    if (R5set && typeof R5set.has === "function") {
-      for (let i = 9; i <= 15; i++) {
-        for (const n of bets[i]) {
-          if (R5set.has(n)) return false;
-        }
-      }
-    }
+    for (let i = 9; i <= 15; i++) for (const n of bets[i]) if (R5set.has(n)) return false;
 
     let twos = 0, threes = 0, other = 0;
     for (let i = 1; i <= 49; i++) {
@@ -820,107 +789,173 @@
     return twos === 45 && threes === 4 && other === 0;
   }
 
-  function buildPack5dan() {
-    const pool = Array.from({ length: 49 }, (_, i) => i + 1);
-    shuffle(pool);
-    const dan = pool.slice(0, 5).sort((a, c) => a - c);
-    const legs = pool.slice(5).sort((a, c) => a - c);
-    return legs.map((x) => [...dan, x].sort((a, c) => a - c));
-  }
-
-  // ---------- Render ----------
+  // ---------- Render helpers ----------
   function clearResult() { result.innerHTML = ""; }
 
-  function renderNormal(sets, meta) {
+  function renderBallsRow(nums, labelText = "") {
+    const wrap = document.createElement("div");
+    wrap.className = "numsRow";
+
+    if (labelText) {
+      const label = document.createElement("div");
+      label.className = "muted";
+      label.style.margin = "6px 0 4px";
+      label.innerHTML = `<b>${labelText}</b>`;
+      wrap.appendChild(label);
+    }
+
+    const row = document.createElement("div");
+    row.className = "nums";
+    nums.forEach((n) => {
+      const b = document.createElement("div");
+      b.className = "ball";
+      b.textContent = String(n).padStart(2, "0");
+      row.appendChild(b);
+    });
+    wrap.appendChild(row);
+    return wrap;
+  }
+
+  function renderTags(tags) {
+    if (!tags || !tags.length) return null;
+    const tagsRow = document.createElement("div");
+    tagsRow.className = "tags";
+    for (const t of tags) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = t;
+      tagsRow.appendChild(tag);
+    }
+    return tagsRow;
+  }
+
+  // ---------- Render normal tickets (single/multi/danTuo) ----------
+  function renderNormalTickets(out) {
     clearResult();
 
     const head = document.createElement("div");
     head.className = "muted";
-    head.innerHTML = meta.strict
-      ? `生成方式：<b>嚴格條件生成</b>（Level ${meta.level}，最多 ${meta.maxAllowed} 組）｜已生成 ${sets.length} 組｜嘗試 ${meta.attempts} 次`
-      : `生成方式：<b>純隨機</b>｜已生成 ${sets.length} 組`;
+    head.innerHTML = out.strict
+      ? `生成方式：<b>嚴格條件生成</b>（Level ${out.level}，最多 ${out.maxAllowed} 組）｜已生成 ${out.tickets.length} 組｜嘗試 ${out.attempts} 次`
+      : `生成方式：<b>純隨機</b>｜已生成 ${out.tickets.length} 組`;
     result.appendChild(head);
 
-    sets.forEach((nums, idx) => {
+    out.tickets.forEach((t, idx) => {
       const box = document.createElement("div");
       box.className = "resultSet";
-      box.innerHTML = `<div><b>第 ${idx + 1} 組</b></div>`;
 
-      const numsRow = document.createElement("div");
-      numsRow.className = "nums";
-      nums.forEach((n) => {
-        const b = document.createElement("div");
-        b.className = "ball";
-        b.textContent = String(n).padStart(2, "0");
-        numsRow.appendChild(b);
-      });
-      box.appendChild(numsRow);
+      // Header line
+      const title = document.createElement("div");
+      title.innerHTML = `<b>第 ${idx + 1} 組</b>`;
+      box.appendChild(title);
 
-      const tags = buildTags(nums, meta.statsPack);
-      if (tags.length) {
-        const tagsRow = document.createElement("div");
-        tagsRow.className = "tags";
-        for (const t of tags) {
-          const tag = document.createElement("span");
-          tag.className = "tag";
-          tag.textContent = t;
-          tagsRow.appendChild(tag);
-        }
-        box.appendChild(tagsRow);
+      if (t.kind === "single") {
+        box.appendChild(renderBallsRow(t.nums));
+        const tags = buildTags(t.nums, out.statsPack);
+        const tagsNode = renderTags(tags);
+        if (tagsNode) box.appendChild(tagsNode);
+      }
+
+      if (t.kind === "multi") {
+        box.appendChild(renderBallsRow(t.nums, `複式：${t.nums.length} 碼`));
+        const bets = nCk(t.nums.length, 6);
+        const cost = bets * PRICE_PER_BET;
+        const info = document.createElement("div");
+        info.className = "muted";
+        info.style.marginTop = "6px";
+        info.textContent = `共 ${bets} 注｜金額 $${cost}`;
+        box.appendChild(info);
+
+        const tags = buildTags(t.nums, out.statsPack);
+        const tagsNode = renderTags(tags);
+        if (tagsNode) box.appendChild(tagsNode);
+      }
+
+      if (t.kind === "danTuo") {
+        box.appendChild(renderBallsRow(t.dan, `膽（${t.dan.length}）`));
+        box.appendChild(renderBallsRow(t.tuo, `腳／拖（${t.tuo.length}）`));
+
+        const bets = danTuoBets(t.dan.length, t.tuo.length);
+        const cost = bets * PRICE_PER_BET;
+        const info = document.createElement("div");
+        info.className = "muted";
+        info.style.marginTop = "6px";
+        info.textContent = `共 ${bets} 注｜金額 $${cost}`;
+        box.appendChild(info);
+
+        // tags based on all selected numbers
+        const tags = buildTags(t.all, out.statsPack);
+        const tagsNode = renderTags(tags);
+        if (tagsNode) box.appendChild(tagsNode);
       }
 
       result.appendChild(box);
     });
   }
 
-  function renderPack(mode, bets, meta) {
+  // ---------- Render full meals ----------
+  function renderFullMeal(out) {
     clearResult();
 
-    const title =
-      mode === "full9" ? "9注全餐（1 套）" :
-      mode === "full17" ? "17注全餐（1 套）" :
-      "5膽全餐（1 套）";
-
+    // Head
     const head = document.createElement("div");
     head.className = "muted";
-    head.innerHTML = meta.strict
-      ? `生成方式：<b>${title}</b> + 嚴格條件（已套用）｜嘗試 ${meta.attempts} 次`
+
+    const title =
+      out.kind === "full9" ? "9注全餐（1 套）" :
+      out.kind === "full17" ? "17注全餐（1 套）" :
+      "5 膽全餐（1 套）";
+
+    head.innerHTML = out.strict
+      ? `生成方式：<b>${title}</b> + 嚴格條件（已套用）｜嘗試 ${out.attempts} 次`
       : `生成方式：<b>${title}</b>（純隨機）`;
     result.appendChild(head);
 
+    // ✅ 5膽全餐：只顯示膽＋腳（不列 44 注）
+    if (out.kind === "full5dan") {
+      const box = document.createElement("div");
+      box.className = "resultSet";
+      box.innerHTML = `<div><b>5 膽全餐</b></div>`;
+
+      box.appendChild(renderBallsRow(out.dan, `膽（5）`));
+      box.appendChild(renderBallsRow(out.legs, `腳（44）`));
+
+      const info = document.createElement("div");
+      info.className = "muted";
+      info.style.marginTop = "6px";
+      info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
+      box.appendChild(info);
+
+      // tags based on all selected numbers (49)
+      const tags = buildTags(out.all, out.statsPack);
+      const tagsNode = renderTags(tags);
+      if (tagsNode) box.appendChild(tagsNode);
+
+      result.appendChild(box);
+      return;
+    }
+
+    // 9/17 全餐：仍然列出每一注（9 或 17 注可接受）
+    const bets = out.bets || [];
     bets.forEach((nums, idx) => {
       const box = document.createElement("div");
       box.className = "resultSet";
       box.innerHTML = `<div><b>第 ${idx + 1} 注</b></div>`;
-
-      const numsRow = document.createElement("div");
-      numsRow.className = "nums";
-      nums.forEach((n) => {
-        const b = document.createElement("div");
-        b.className = "ball";
-        b.textContent = String(n).padStart(2, "0");
-        numsRow.appendChild(b);
-      });
-      box.appendChild(numsRow);
-
-      const tags = buildTags(nums, meta.statsPack);
-      if (tags.length) {
-        const tagsRow = document.createElement("div");
-        tagsRow.className = "tags";
-        for (const t of tags) {
-          const tag = document.createElement("span");
-          tag.className = "tag";
-          tag.textContent = t;
-          tagsRow.appendChild(tag);
-        }
-        box.appendChild(tagsRow);
-      }
-
+      box.appendChild(renderBallsRow(nums));
+      const tags = buildTags(nums, out.statsPack);
+      const tagsNode = renderTags(tags);
+      if (tagsNode) box.appendChild(tagsNode);
       result.appendChild(box);
     });
   }
 
   // ---------- Actions ----------
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
+    }[c]));
+  }
+
   async function onGenerate() {
     try {
       btnGenerate.disabled = true;
@@ -934,16 +969,15 @@
       const mode = buyMode.value;
 
       if (isAdvancedBuyMode(mode)) {
-        const pack = await generateFullMeal(mode);
-        renderPack(mode, pack.bets, pack);
+        const out = await generateFullMeal(mode);
+        renderFullMeal(out);
         showToast("已生成 1 套注單");
         return;
       }
 
-      const desiredSets = Number(setCount.value || 1);
-      const out = await generateNormalSets(desiredSets);
-      renderNormal(out.sets, out);
-
+      const desired = Number(setCount.value || 1);
+      const out = await generateNormalTickets(desired);
+      renderNormalTickets(out);
       showToast(out.strict ? "已按條件生成" : "已純隨機生成");
     } catch (e) {
       clearResult();
@@ -956,12 +990,6 @@
     } finally {
       btnGenerate.disabled = false;
     }
-  }
-
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, (c) => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
-    }[c]));
   }
 
   function onClear() {
@@ -979,14 +1007,12 @@
   ];
   inputs.forEach((x) => x.addEventListener("change", updateSetCountOptions));
 
-  // dan -> update tuo options immediately
   danN.addEventListener("change", () => {
     updateTuoOptions();
     updateSetCountOptions();
   });
 
   buyMode.addEventListener("change", () => {
-    // switching mode might show danTuo box; ensure tuo options up-to-date
     if (buyMode.value === "danTuo") updateTuoOptions();
     updateSetCountOptions();
   });
@@ -999,10 +1025,7 @@
   setOptions2(maxConsec, withOff([2, 3], "Off"), true);
   setOptions2(maxTail, withOff([2, 3], "Off"), true);
 
-  // Basic selects
   initBasicSelectOptions();
-
-  // setCount default options (1..10)
   setOptions2(setCount, Array.from({ length: 10 }, (_, i) => i + 1), true);
 
   updateSetCountOptions();
