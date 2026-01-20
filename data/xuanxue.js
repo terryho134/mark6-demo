@@ -160,7 +160,7 @@
 
     const blend = clamp(Number(xuanxue.blend || 0.5), 0, 1);
 
-    // seed: stable per inputs + today (so每日氣口有少少變化，但可解釋)
+    // seed: stable per inputs + today
     const dayKey = new Date();
     const daySeed = toIntSeed(`${dayKey.getFullYear()}-${dayKey.getMonth()+1}-${dayKey.getDate()}`);
     const baseSeed = toIntSeed(JSON.stringify({
@@ -236,7 +236,7 @@
     }
     if (sum > 0) for (let n = 1; n <= 49; n++) w[n] /= sum;
 
-    // mix a bit uniform so唔會「死押」幾粒
+    // mix a bit uniform
     const mixMap = { light: 0.15, medium: 0.10, strong: 0.06 };
     const mix = mixMap[strength] ?? 0.10;
     const available = 49 - forbiddenSet.size;
@@ -263,12 +263,20 @@
     };
   }
 
+  // ✅ NEW: allow picker.js to reseed per click (Option 1)
+  function reseedPack(pack, seed) {
+    if (!pack) return pack;
+    const s = (Number(seed) >>> 0);
+    pack.seed = s;
+    pack.rng = mulberry32(s);
+    return pack;
+  }
+
   function weightedSampleWithoutReplacement(k, pack) {
     const { rng, weights, forbiddenSet } = pack;
     const picked = [];
     const used = new Set();
 
-    // build cumulative on the fly each draw (49 is small, OK)
     while (picked.length < k) {
       let r = rng();
       let acc = 0;
@@ -281,7 +289,6 @@
         if (r <= acc) { chosen = n; break; }
       }
       if (chosen == null) {
-        // fallback: first available
         for (let n = 1; n <= 49; n++) {
           if (forbiddenSet && forbiddenSet.has(n)) continue;
           if (!used.has(n)) { chosen = n; break; }
@@ -334,7 +341,6 @@
     const ratioMap = { low: 0.25, medium: 0.35, high: 0.45 };
     const ratio = ratioMap[xuanxue.riskLevel || "medium"] ?? 0.35;
 
-    // 只用上限的一部份（唔填爆）
     let targetSpend = Math.round((baseCap * ratio) / 10) * 10;
     targetSpend = clamp(targetSpend, 60, 280);
 
@@ -346,47 +352,34 @@
     const inspCnt = parseNumList(xuanxue.inspiration, 6).length;
     const focusScore = (hasAnyDob ? 2 : 0) + luckyCnt * 2 + inspCnt;
 
-    // 候選 plans（都偏保守金額）
     const candidates = [];
-
-    // A) 多注單式（分散）
     candidates.push({ mode:"single", m: clamp(Math.floor(targetSpend / 10), 3, 10), reason:"分散氣口：以多注單式為主" });
-
-    // B) 7碼複式（聚焦、成本可控）
     candidates.push({ mode:"multi", n:7, m: clamp(Math.floor(targetSpend / 70) || 1, 1, 2), reason:"聚氣：以7碼複式集中主題" });
 
-    // C) 8碼複式（只在預算較高 & 進取先考慮）
     if ((xuanxue.riskLevel === "high") && targetSpend >= 280) {
       candidates.push({ mode:"multi", n:8, m:1, reason:"進取聚焦：8碼複式（成本較高）" });
     }
 
-    // D) 小膽拖（成本好壓、易解釋）
     candidates.push({ mode:"danTuo", d:2, t:6, m:1, reason:"以小膽拖聚氣：2膽6拖（成本適中）" });
     candidates.push({ mode:"danTuo", d:3, t:5, m:1, reason:"以小膽拖聚氣：3膽5拖（成本適中）" });
 
-    // E) 5膽全餐（$440）— 只在用戶真係想「大包圍」先會推
     if (baseCap >= 440 && xuanxue.riskLevel === "high") {
       candidates.push({ mode:"full5dan", m:1, reason:"大包圍：5膽全餐（但仍低於$500）" });
     }
 
-    // 選一個「符合 focus」又最貼 targetSpend 的
     let best = null;
     let bestScore = -Infinity;
 
     for (const c of candidates) {
       c.m = clamp(c.m || 1, 1, 10);
       const cost = costOfPlan(c);
-
-      // 不可超 targetSpend 太多（最多+10作容差）
       if (cost > targetSpend + 10) continue;
 
-      // cap sets by strict level (maxAllowedSets)
       c.m = clamp(c.m, 1, maxAllowedSets || 10);
 
       const cost2 = costOfPlan(c);
       if (cost2 <= 0) continue;
 
-      // focus preference
       let pref = 0;
       if (focusScore >= 4) {
         if (c.mode === "multi") pref += 2.0;
@@ -398,14 +391,11 @@
         if (c.mode === "single") pref += 1.2;
       }
 
-      // closeness to target
       const closeness = -Math.abs(targetSpend - cost2) / 40;
-
       const score = pref + closeness;
       if (score > bestScore) { bestScore = score; best = { ...c, cost: cost2, targetSpend }; }
     }
 
-    // fallback
     if (!best) best = { mode:"single", m: clamp(Math.floor(targetSpend/10), 3, maxAllowedSets||10), cost: clamp(Math.floor(targetSpend/10),3,10)*10, targetSpend, reason:"保守分散：多注單式" };
 
     return best;
@@ -415,8 +405,7 @@
     const dirs = ["東", "東南", "南", "西南", "西", "西北", "北", "東北"];
     const dir = dirs[seed % dirs.length];
 
-    // 兩個 30分鐘 window（以 seed 推）
-    const a = (seed % 9) + 9;    // 09:00 - 17:00 range
+    const a = (seed % 9) + 9;
     const b = ((seed >> 4) % 9) + 11;
     const t1 = `${String(a).padStart(2,"0")}:00–${String(a).padStart(2,"0")}:30`;
     const t2 = `${String(b).padStart(2,"0")}:30–${String(b+1).padStart(2,"0")}:00`;
@@ -424,7 +413,6 @@
     return {
       time: [t1, t2],
       direction: dir,
-      // 考慮手機下注：以「渠道」為主；實體投注站只給「類型」而非亂點名
       channel: "手機／網上投注（較順氣：坐定、面向建議方位即可）",
       shopHint: `如要去實體投注站：建議揀「向${dir}方向行過去」第一間、且人流較少的投注站（以免心浮氣亂）。`
     };
@@ -442,7 +430,6 @@
       if (m.tags.includes("lucky")) luckyHit++;
       if (m.tags.includes("inspiration")) inspirationHit++;
 
-      // breakdown（大於0.8 視為「命中」）
       if ((m.breakdown.wuxing || 0) >= 0.8) wux++;
       if ((m.breakdown.gua || 0) >= 0.8) gua++;
       if ((m.breakdown.star9 || 0) >= 0.8) star++;
@@ -456,6 +443,7 @@
     parseNumList,
     parseDob,
     buildWeights,
+    reseedPack, // ✅ add
     weightedSampleWithoutReplacement,
     recommendPlan,
     recommendLuckContext,
