@@ -93,6 +93,9 @@
   const xxApplyPlan = el("xxApplyPlan");
   const xxPlanPreview = el("xxPlanPreview");
 
+  // ✅ Seed mode selector（可選 UI：click / time_minute / time_shichen）
+  const xxSeedMode = el("xxSeedMode");
+
   // ---------- Constants ----------
   const N_ALLOWED = [10, 20, 30, 60, 100];
   const PRICE_PER_BET = 10;
@@ -108,6 +111,11 @@
     plan: null,         // recommended plan
     luck: null,         // time/direction/channel suggestion
     explainLevel: "standard",
+
+    // ✅ for (2)(3) reseed behavior
+    _clickSeq: 0,
+    seedMode: "click",
+    seedFinal: null,
   };
 
   // Mark Six color mapping (HKJC standard)
@@ -564,7 +572,7 @@
     }
   }
 
-  // ---------- RNG seed (for Xuanxue weighted pick) ----------
+  // ---------- RNG seed (kept; may still be useful elsewhere) ----------
   function genSeed() {
     // Prefer crypto-quality randomness
     if (typeof crypto !== "undefined" && crypto.getRandomValues) {
@@ -576,7 +584,6 @@
     // fallback
     return Math.floor((Date.now() ^ (Math.random() * 1e9)) % 2147483647);
   }
-
 
   function sampleDistinct(k, excludeSet = null) {
     // 玄學加權抽號（如已啟用）
@@ -1116,6 +1123,34 @@
     return tagsRow;
   }
 
+  // ✅ NEW：玄學逐粒解釋 render
+  function renderXuanxueExplain(lines) {
+    if (!lines || !lines.length) return null;
+
+    const wrap = document.createElement("div");
+    wrap.className = "muted";
+    wrap.style.marginTop = "8px";
+    wrap.style.lineHeight = "1.45";
+
+    const title = document.createElement("div");
+    title.innerHTML = "<b>玄學解釋</b>";
+    wrap.appendChild(title);
+
+    for (const l of lines) {
+      const row = document.createElement("div");
+      row.textContent = l;
+      wrap.appendChild(row);
+    }
+
+    return wrap;
+  }
+
+  function seedModeLabel(mode) {
+    if (mode === "time_shichen") return "時辰氣口（每2小時變）";
+    if (mode === "time_minute") return "每分鐘氣口（每分鐘變）";
+    return "按鍵即時（每次按都變）";
+  }
+
   function renderNormalTickets(out) {
     clearResult();
 
@@ -1149,10 +1184,15 @@
         ? `幸運下注時間：${luck.time.join(" 或 ")}｜幸運方位：${luck.direction}｜建議：${luck.channel}｜${luck.shopHint}`
         : "";
 
+      const seedText = runtimeXX.weightedPick
+        ? `取號種子：${seedModeLabel(runtimeXX.seedMode)}`
+        : "";
+
       xxHead.innerHTML =
         `<b>玄學提示</b><br>` +
         `${planText}<br>` +
         `${runtimeXX.weightedPick ? "取號：已啟用四源加權（五行/易卦/九宮/生肖）" : "取號：未啟用四源加權（保持隨機）"}<br>` +
+        `${seedText ? (seedText + "<br>") : ""}` +
         `${luckText}`;
 
       result.appendChild(xxHead);
@@ -1188,6 +1228,13 @@
         box.appendChild(renderSummaryLine(exp.summary));
         const chips = renderChips(exp.chips);
         if (chips) box.appendChild(chips);
+
+        // ✅ 逐粒玄學解釋
+        if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue && window.Xuanxue.explainTicket) {
+          const xxExp = window.Xuanxue.explainTicket(numsSortedLocal, runtimeXX.pack, runtimeXX.explainLevel);
+          const xxBox = renderXuanxueExplain(xxExp && xxExp.lines);
+          if (xxBox) box.appendChild(xxBox);
+        }
       }
 
       if (t.kind === "multi") {
@@ -1217,6 +1264,13 @@
 
         const chips = renderChips(exp.chips);
         if (chips) box.appendChild(chips);
+
+        // ✅ 逐粒玄學解釋
+        if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue && window.Xuanxue.explainTicket) {
+          const xxExp = window.Xuanxue.explainTicket(numsSortedLocal, runtimeXX.pack, runtimeXX.explainLevel);
+          const xxBox = renderXuanxueExplain(xxExp && xxExp.lines);
+          if (xxBox) box.appendChild(xxBox);
+        }
       }
 
       if (t.kind === "danTuo") {
@@ -1255,6 +1309,14 @@
 
         const chips = renderChips(allExp.chips);
         if (chips) box.appendChild(chips);
+
+        // ✅ 逐粒玄學解釋（用全組）
+        if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue && window.Xuanxue.explainTicket) {
+          const xxNums = t.all.slice().sort((a,b)=>a-b);
+          const xxExp = window.Xuanxue.explainTicket(xxNums, runtimeXX.pack, runtimeXX.explainLevel);
+          const xxBox = renderXuanxueExplain(xxExp && xxExp.lines);
+          if (xxBox) box.appendChild(xxBox);
+        }
       }
 
       // ✅ 5膽全餐（基本買法，多組）：顯示 膽 + 腳（不列 44 注）
@@ -1290,9 +1352,16 @@
         info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
         box.appendChild(info);
 
-        // chips use all-set description
         const chips = renderChips(allExp.chips);
         if (chips) box.appendChild(chips);
+
+        // ✅ 逐粒玄學解釋（用全組）
+        if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue && window.Xuanxue.explainTicket) {
+          const xxNums = t.all.slice().sort((a,b)=>a-b);
+          const xxExp = window.Xuanxue.explainTicket(xxNums, runtimeXX.pack, runtimeXX.explainLevel);
+          const xxBox = renderXuanxueExplain(xxExp && xxExp.lines);
+          if (xxBox) box.appendChild(xxBox);
+        }
       }
 
       result.appendChild(box);
@@ -1313,6 +1382,31 @@
       ? `生成方式：<b>${title}</b> + 嚴格條件（已套用）｜嘗試 ${out.attempts} 次`
       : `生成方式：<b>${title}</b>（純隨機）`;
     result.appendChild(head);
+
+    // ---- Xuanxue header (for full meal too) ----
+    if (runtimeXX.enabled) {
+      const xxHead = document.createElement("div");
+      xxHead.className = "muted";
+      xxHead.style.marginTop = "6px";
+      xxHead.style.lineHeight = "1.4";
+
+      const luck = runtimeXX.luck;
+      const luckText = (luck && luck.time)
+        ? `幸運下注時間：${luck.time.join(" 或 ")}｜幸運方位：${luck.direction}｜建議：${luck.channel}｜${luck.shopHint}`
+        : "";
+
+      const seedText = runtimeXX.weightedPick
+        ? `取號種子：${seedModeLabel(runtimeXX.seedMode)}`
+        : "";
+
+      xxHead.innerHTML =
+        `<b>玄學提示</b><br>` +
+        `${runtimeXX.weightedPick ? "取號：已啟用四源加權（五行/易卦/九宮/生肖）" : "取號：未啟用四源加權（保持隨機）"}<br>` +
+        `${seedText ? (seedText + "<br>") : ""}` +
+        `${luckText}`;
+
+      result.appendChild(xxHead);
+    }
 
     const bets = out.bets || [];
     bets.forEach((nums, idx) => {
@@ -1339,6 +1433,13 @@
       box.appendChild(renderSummaryLine(exp.summary));
       const chips = renderChips(exp.chips);
       if (chips) box.appendChild(chips);
+
+      // ✅ 逐粒玄學解釋
+      if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue && window.Xuanxue.explainTicket) {
+        const xxExp = window.Xuanxue.explainTicket(numsSortedLocal, runtimeXX.pack, runtimeXX.explainLevel);
+        const xxBox = renderXuanxueExplain(xxExp && xxExp.lines);
+        if (xxBox) box.appendChild(xxBox);
+      }
 
       result.appendChild(box);
     });
@@ -1370,6 +1471,8 @@
       runtimeXX.plan = null;
       runtimeXX.luck = null;
       runtimeXX.explainLevel = "standard";
+      runtimeXX.seedMode = "click";
+      runtimeXX.seedFinal = null;
 
       const xx = getXuanxueState();
       if (xx && xx.enabled) {
@@ -1440,17 +1543,36 @@
       if (statsCache.has(nForStats)) cachedStatsPack = statsCache.get(nForStats);
 
       if (runtimeXX.enabled && runtimeXX.weightedPick && window.Xuanxue) {
+        // 1) build base weights pack（seed 係「每日 + 輸入」）
         runtimeXX.pack = window.Xuanxue.buildWeights(xx, cachedStatsPack);
 
-        // ✅ Option 1：每次按 Generate 都改 RNG（所以結果會變）
-        if (runtimeXX.pack && window.Xuanxue.reseedPack) {
-          window.Xuanxue.reseedPack(runtimeXX.pack, genSeed());
+        // 2) ✅ (2)(3) reseed：click / time_minute / time_shichen
+        //    - 若冇 UI，就預設 click
+        const seedMode = (xxSeedMode && xxSeedMode.value) ? xxSeedMode.value : "click";
+        runtimeXX.seedMode = seedMode;
+
+        let seed2 = (runtimeXX.pack && runtimeXX.pack.seed) ? (runtimeXX.pack.seed >>> 0) : 1234567;
+
+        if (seedMode === "time_minute") {
+          if (window.Xuanxue.deriveSeed) seed2 = window.Xuanxue.deriveSeed(seed2, "minute");
+        } else if (seedMode === "time_shichen") {
+          if (window.Xuanxue.deriveSeed) seed2 = window.Xuanxue.deriveSeed(seed2, "shichen");
+        } else {
+          // click：每次按都唔同（Date.now + counter）
+          runtimeXX._clickSeq = (runtimeXX._clickSeq || 0) + 1;
+          seed2 = (seed2 ^ (Date.now() & 0xffffffff) ^ (runtimeXX._clickSeq * 2654435761)) >>> 0;
+        }
+
+        runtimeXX.seedFinal = seed2;
+
+        if (window.Xuanxue.reseedPack) {
+          runtimeXX.pack = window.Xuanxue.reseedPack(runtimeXX.pack, seed2);
         }
       }
 
       // ---------- Luck context (time/direction/channel/shop) ----------
       if (runtimeXX.enabled && window.Xuanxue) {
-        const seed = runtimeXX.pack ? runtimeXX.pack.seed : 1234567;
+        const seed = (runtimeXX.pack && Number.isFinite(runtimeXX.pack.seed)) ? runtimeXX.pack.seed : 1234567;
         runtimeXX.luck = window.Xuanxue.recommendLuckContext(seed);
       }
 
@@ -1504,7 +1626,8 @@
     xxLucky, xxForbidden, xxExcludeTail4, xxInspiration,
     xxEngineWuxing, xxEngineGua, xxEngineStar9, xxEngineZodiac,
     xxStrength, xxExplainLevel,
-    xxApplyPlan
+    xxApplyPlan,
+    xxSeedMode, // ✅ seed mode selector
   ].filter(Boolean);
 
   inputs.concat(xuanxueInputs).forEach((x) => x.addEventListener("change", updateSetCountOptions));
