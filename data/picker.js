@@ -1442,9 +1442,9 @@
       if (runtimeXX.enabled && runtimeXX.weightedPick && window.Xuanxue) {
         runtimeXX.pack = window.Xuanxue.buildWeights(xx, cachedStatsPack);
 
-        // ✅ Option 1: random-but-biased => new seed every Generate
-        if (runtimeXX.pack) {
-          runtimeXX.pack.seed = genSeed();
+        // ✅ Option 1：每次按 Generate 都改 RNG（所以結果會變）
+        if (runtimeXX.pack && window.Xuanxue.reseedPack) {
+          window.Xuanxue.reseedPack(runtimeXX.pack, genSeed());
         }
       }
 
