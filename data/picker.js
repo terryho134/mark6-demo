@@ -54,10 +54,61 @@
   const overlapHint = el("overlapHint");
   const limitHint = el("limitHint");
 
+  // ---------- Xuanxue (optional UI) ----------
+  const xxAutoPlan = el("xxAutoPlan");
+  const xxAutoPlanHint = el("xxAutoPlanHint");
+  const xxWeightedPick = el("xxWeightedPick");
+  const xxWeightedHint = el("xxWeightedHint");
+  const xxMaxBudget = el("xxMaxBudget");
+  const xxRiskLevel = el("xxRiskLevel");
+
+  const xxDobPrecA = el("xxDobPrecA");
+  const xxDobA = el("xxDobA");
+  const xxGenderA = el("xxGenderA");
+  const xxDobHintA = el("xxDobHintA");
+
+  const xxEnableB = el("xxEnableB");
+  const xxBBox = el("xxBBox");
+  const xxDobPrecB = el("xxDobPrecB");
+  const xxDobB = el("xxDobB");
+  const xxGenderB = el("xxGenderB");
+  const xxBlend = el("xxBlend");
+
+  const xxLucky = el("xxLucky");
+  const xxLuckyHint = el("xxLuckyHint");
+  const xxForbidden = el("xxForbidden");
+  const xxExcludeTail4 = el("xxExcludeTail4");
+  const xxForbiddenHint = el("xxForbiddenHint");
+  const xxInspiration = el("xxInspiration");
+  const xxInspirationHint = el("xxInspirationHint");
+
+  const xxEngineWuxing = el("xxEngineWuxing");
+  const xxEngineGua = el("xxEngineGua");
+  const xxEngineStar9 = el("xxEngineStar9");
+  const xxEngineZodiac = el("xxEngineZodiac");
+
+  const xxStrength = el("xxStrength");
+  const xxExplainLevel = el("xxExplainLevel");
+
+  const xxApplyPlan = el("xxApplyPlan");
+  const xxPlanPreview = el("xxPlanPreview");
+
   // ---------- Constants ----------
   const N_ALLOWED = [10, 20, 30, 60, 100];
   const PRICE_PER_BET = 10;
   const AVG = 24.5;
+
+  // ---------- Runtime Xuanxue (per-generate) ----------
+  const runtimeXX = {
+    enabled: false,
+    autoPlan: false,
+    weightedPick: false,
+    excludeSet: null,
+    pack: null,         // weights pack
+    plan: null,         // recommended plan
+    luck: null,         // time/direction/channel suggestion
+    explainLevel: "standard",
+  };
 
   // Mark Six color mapping (HKJC standard)
   const COLOR = {
@@ -160,6 +211,10 @@
     return mode === "full9" || mode === "full17";
   }
 
+  function isAutoPlanMode(mode) {
+    return mode === "autoPlan";
+  }
+
   function anyAdvancedSelected() {
     return Boolean(
       maxConsec.value ||
@@ -252,6 +307,49 @@
     return 10;
   }
 
+  function hasXuanxueUI() {
+    return typeof window !== "undefined" && !!window.Xuanxue && !!xxAutoPlan;
+  }
+
+  function getXuanxueState() {
+    if (!hasXuanxueUI()) return { enabled:false };
+
+    const st = {
+      enabled: true,
+      autoPlan: !!xxAutoPlan.checked,
+      weightedPick: !!xxWeightedPick.checked,
+      maxBudget: Number(xxMaxBudget.value || 500),
+      riskLevel: xxRiskLevel.value || "medium",
+
+      dobPrecA: xxDobPrecA.value || "NONE",
+      dobA: (xxDobA.value || "").trim(),
+      genderA: xxGenderA.value || "unspecified",
+
+      enableB: !!xxEnableB.checked,
+      dobPrecB: xxDobPrecB.value || "NONE",
+      dobB: (xxDobB.value || "").trim(),
+      genderB: xxGenderB.value || "unspecified",
+      blend: Number((xxBlend && xxBlend.value) || 0.5),
+
+      lucky: (xxLucky.value || "").trim(),
+      forbidden: (xxForbidden.value || "").trim(),
+      excludeTail4: !!xxExcludeTail4.checked,
+      inspiration: (xxInspiration.value || "").trim(),
+
+      engines: {
+        wuxing: !!xxEngineWuxing.checked,
+        gua: !!xxEngineGua.checked,
+        star9: !!xxEngineStar9.checked,
+        zodiac: !!xxEngineZodiac.checked,
+      },
+
+      strength: (xxStrength && xxStrength.value) || "medium",
+      explainLevel: (xxExplainLevel && xxExplainLevel.value) || "standard",
+    };
+
+    return st;
+  }
+
   // ---------- Basic: dynamic options ----------
   function initBasicSelectOptions() {
     setOptions2(multiN, Array.from({ length: 9 }, (_, i) => 7 + i)); // 7–15
@@ -321,6 +419,19 @@
     const level = computeLevel();
     const maxAllowed = maxSetsAllowedByLevel(level);
 
+    // autoPlan：setCount 由建議回填（先 disable）
+    if (isAutoPlanMode(buyMode.value)) {
+      setCount.disabled = true;
+      setOptions2(setCount, [1]);
+      setCountHint.textContent = "交俾你建議：生成時會自動回填買法與組數。";
+      limitHint.textContent = anyAdvancedSelected()
+        ? `已啟用條件（嚴格）：生成時仍會受 Level cap 影響（Level ${computeLevel()}）。`
+        : "未啟用條件：純隨機（如再開玄學加權，會變成偏向取號）。";
+      btnGenerate.disabled = hardConflicts().length > 0;
+      updateBuyModeUI();
+      return;
+    }
+
     if (isAdvancedBuyMode(buyMode.value)) {
       setCount.disabled = true;
       setOptions2(setCount, [1]);
@@ -374,39 +485,73 @@
     return t >= need ? nCk(t, need) : 0;
   }
 
+  // ✅ 修正：updateBuyModeUI 原本 nested/duplicate if 會令提示錯亂
   function updateBuyModeUI() {
     const mode = buyMode.value;
-    multiBox.classList.toggle("hidden", mode !== "multi");
-    danBox.classList.toggle("hidden", mode !== "danTuo");
-    tuoBox.classList.toggle("hidden", mode !== "danTuo");
-
     const sets = Number(setCount.value || 1);
+
+    const auto = isAutoPlanMode(mode);
+
+    // show/hide boxes
+    multiBox.classList.toggle("hidden", auto || mode !== "multi");
+    danBox.classList.toggle("hidden", auto || mode !== "danTuo");
+    tuoBox.classList.toggle("hidden", auto || mode !== "danTuo");
+
+    // reset cost hints
+    multiCostHint.textContent = "";
+    danTuoCostHint.textContent = "";
+
+    if (auto) {
+      buyModeHint.textContent = "交俾你建議：由玄學建議買法＋組數（不會用盡上限）";
+      return;
+    }
 
     if (mode === "single") {
       buyModeHint.textContent = `每組 1 注（$${PRICE_PER_BET}）`;
-    } else if (mode === "multi") {
+      return;
+    }
+
+    if (mode === "multi") {
       const n = Number(multiN.value);
       const bets = nCk(n, 6);
       buyModeHint.textContent = `${n} 碼複式：共 ${bets} 注`;
-      multiCostHint.textContent = `每組金額：$${bets * PRICE_PER_BET}${setCount.disabled ? "" : `｜${sets}組總額：$${bets * PRICE_PER_BET * sets}`}`;
-    } else if (mode === "danTuo") {
+      multiCostHint.textContent =
+        `每組金額：$${bets * PRICE_PER_BET}` +
+        (setCount.disabled ? "" : `｜${sets}組總額：$${bets * PRICE_PER_BET * sets}`);
+      return;
+    }
+
+    if (mode === "danTuo") {
       const d = Number(danN.value);
       const t = Number(tuoN.value);
       const bets = danTuoBets(d, t);
       buyModeHint.textContent = `${d} 膽 + ${t} 拖：共 ${bets} 注`;
       danTuoCostHint.textContent =
         bets > 0
-          ? `每組金額：$${bets * PRICE_PER_BET}${setCount.disabled ? "" : `｜${sets}組總額：$${bets * PRICE_PER_BET * sets}`}`
+          ? `每組金額：$${bets * PRICE_PER_BET}` + (setCount.disabled ? "" : `｜${sets}組總額：$${bets * PRICE_PER_BET * sets}`)
           : "拖數不足，無法組合成 6 粒。";
-    } else if (mode === "full9") {
+      return;
+    }
+
+    if (mode === "full9") {
       buyModeHint.textContent = "9注全餐：1 套 9 注（$90）";
-    } else if (mode === "full17") {
+      return;
+    }
+
+    if (mode === "full17") {
       buyModeHint.textContent = "17注全餐：1 套 17 注（$170）";
-    } else if (mode === "full5dan") {
+      return;
+    }
+
+    if (mode === "full5dan") {
       const per = 44 * PRICE_PER_BET; // 44注
       buyModeHint.textContent = `5 膽全餐：每組 44 注（$${per}）`;
       danTuoCostHint.textContent = setCount.disabled ? "" : `${sets}組總額：$${per * sets}`;
+      return;
     }
+
+    // fallback
+    buyModeHint.textContent = "";
   }
 
   // ---------- Random helpers ----------
@@ -418,6 +563,18 @@
   }
 
   function sampleDistinct(k, excludeSet = null) {
+    // 玄學加權抽號（如已啟用）
+    if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue) {
+      // pack 內含 forbiddenSet，呢度再合併額外 excludeSet
+      const merged = new Set(runtimeXX.pack.forbiddenSet ? Array.from(runtimeXX.pack.forbiddenSet) : []);
+      if (excludeSet) for (const x of excludeSet) merged.add(x);
+
+      // 做一個 shallow pack，替換 forbiddenSet
+      const pack2 = { ...runtimeXX.pack, forbiddenSet: merged };
+      return window.Xuanxue.weightedSampleWithoutReplacement(k, pack2);
+    }
+
+    // --- 原本純隨機 ---
     const pool = [];
     for (let i = 1; i <= 49; i++) {
       if (excludeSet && excludeSet.has(i)) continue;
@@ -628,39 +785,57 @@
 
   // ---------- Ticket generators ----------
   function buildTicketByMode(mode) {
+    // 玄學/禁忌排除集合（可為 null）
+    const ex = runtimeXX && runtimeXX.excludeSet ? runtimeXX.excludeSet : null;
+
     if (mode === "single") {
-      const nums = sampleDistinct(6);
+      const nums = sampleDistinct(6, ex);
       return { kind: "single", nums, keyNums: nums };
     }
 
     if (mode === "multi") {
       const n = Number(multiN.value);
-      const nums = sampleDistinct(n);
+      const nums = sampleDistinct(n, ex);
       return { kind: "multi", nums, keyNums: nums };
     }
 
     if (mode === "danTuo") {
       const d = Number(danN.value);
       const t = Number(tuoN.value);
-      const dan = sampleDistinct(d);
+
+      // 先抽膽（避禁忌）
+      const dan = sampleDistinct(d, ex);
       const danSet = new Set(dan);
-      const tuo = sampleDistinct(t, danSet);
+
+      // 拖要同時避：禁忌 + 已選膽
+      const merged = new Set();
+      if (ex) for (const x of ex) merged.add(x);
+      for (const x of danSet) merged.add(x);
+
+      const tuo = sampleDistinct(t, merged);
+
       const all = [...dan, ...tuo].sort((a, b) => a - b);
       return { kind: "danTuo", dan, tuo, all, keyNums: all };
     }
 
     // ✅ 5膽全餐：基本買法 -> 生成「膽 + 腳」，組與組多樣性以「膽」衡量
     if (mode === "full5dan") {
-      const dan = sampleDistinct(5);
+      // 膽要避禁忌
+      const dan = sampleDistinct(5, ex);
       const danSet = new Set(dan);
+
+      // 腳 = 除咗膽以外所有數（保持你原設計：腳唔避禁忌）
       const legs = [];
-      for (let i = 1; i <= 49; i++) if (!danSet.has(i)) legs.push(i);
+      for (let i = 1; i <= 49; i++) {
+        if (!danSet.has(i)) legs.push(i);
+      }
+
       const all = [...dan, ...legs].sort((a, b) => a - b);
       return { kind: "full5dan", dan, legs, all, keyNums: dan };
     }
 
     // fallback
-    const nums = sampleDistinct(6);
+    const nums = sampleDistinct(6, ex);
     return { kind: "single", nums, keyNums: nums };
   }
 
@@ -696,8 +871,6 @@
       const numsSorted = (t.keyNums || []).slice().sort((a, b) => a - b);
 
       if (strict) {
-        // ✅ full5dan：條件判斷以「膽」(keyNums) / 或 all 規則？（目前保持 keyNums）
-        // 若你之後想條件套用到全 49（膽+腳），我可以再調整
         if (!checkAdvancedConstraints(numsSorted, statsPack)) continue;
 
         if (overlapK !== null) {
@@ -926,6 +1099,20 @@
     return tagsRow;
   }
 
+  // ✅ 4.12：修正 numsSorted 未定義，令玄學命中解釋可正常顯示
+  function maybeInjectXuanxueChips(exp, numsSorted) {
+    if (!(runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue)) return;
+    const hit = window.Xuanxue.explainXuanxueHit(numsSorted, runtimeXX.pack);
+    if (!hit) return;
+
+    if (runtimeXX.explainLevel !== "compact") {
+      exp.chips.unshift(`玄學：幸運命中${hit.luckyHit}｜靈感命中${hit.inspirationHit}`);
+    }
+    if (runtimeXX.explainLevel === "detailed") {
+      exp.chips.unshift(`四源命中：五行${hit.wux}｜易卦${hit.gua}｜九宮${hit.star}｜生肖${hit.zod}`);
+    }
+  }
+
   function renderNormalTickets(out) {
     clearResult();
 
@@ -936,6 +1123,38 @@
       : `生成方式：<b>純隨機</b>｜已生成 ${out.tickets.length} 組`;
     result.appendChild(head);
 
+    // ---- Xuanxue header ----
+    if (runtimeXX.enabled) {
+      const xxHead = document.createElement("div");
+      xxHead.className = "muted";
+      xxHead.style.marginTop = "6px";
+      xxHead.style.lineHeight = "1.4";
+
+      const plan = runtimeXX.plan;
+      const luck = runtimeXX.luck;
+
+      const planText = plan
+        ? `玄學建議買法：${
+            plan.mode === "single" ? `單式 ${setCount.value} 注` :
+            plan.mode === "multi" ? `${multiN.value} 碼複式 × ${setCount.value} 組` :
+            plan.mode === "danTuo" ? `${danN.value} 膽 + ${tuoN.value} 拖 × ${setCount.value} 組` :
+            `5膽全餐 × ${setCount.value} 組`
+          }（原因：${plan.reason || ""}）`
+        : "玄學：未啟用 Auto Plan（只作加權/禁忌排除）";
+
+      const luckText = (luck && luck.time)
+        ? `幸運下注時間：${luck.time.join(" 或 ")}｜幸運方位：${luck.direction}｜建議：${luck.channel}｜${luck.shopHint}`
+        : "";
+
+      xxHead.innerHTML =
+        `<b>玄學提示</b><br>` +
+        `${planText}<br>` +
+        `${runtimeXX.weightedPick ? "取號：已啟用四源加權（五行/易卦/九宮/生肖）" : "取號：未啟用四源加權（保持隨機）"}<br>` +
+        `${luckText}`;
+
+      result.appendChild(xxHead);
+    }
+
     out.tickets.forEach((t, idx) => {
       const box = document.createElement("div");
       box.className = "resultSet";
@@ -945,16 +1164,22 @@
       box.appendChild(title);
 
       if (t.kind === "single") {
+        const numsSorted = t.nums.slice().sort((a,b)=>a-b);
         box.appendChild(renderBallsRow(t.nums));
-        const exp = explainNums(t.nums.slice().sort((a,b)=>a-b), out.statsPack);
+        const exp = explainNums(numsSorted, out.statsPack);
+        maybeInjectXuanxueChips(exp, numsSorted);
+
         box.appendChild(renderSummaryLine(exp.summary));
         const chips = renderChips(exp.chips);
         if (chips) box.appendChild(chips);
       }
 
       if (t.kind === "multi") {
+        const numsSorted = t.nums.slice().sort((a,b)=>a-b);
         box.appendChild(renderBallsRow(t.nums, `複式：${t.nums.length} 碼`));
-        const exp = explainNums(t.nums.slice().sort((a,b)=>a-b), out.statsPack);
+        const exp = explainNums(numsSorted, out.statsPack);
+        maybeInjectXuanxueChips(exp, numsSorted);
+
         box.appendChild(renderSummaryLine(exp.summary));
 
         const bets = nCk(t.nums.length, 6);
@@ -972,10 +1197,13 @@
         box.appendChild(renderBallsRow(t.dan, `膽（${t.dan.length}）`));
         box.appendChild(renderBallsRow(t.tuo, `腳／拖（${t.tuo.length}）`));
 
-        // v2.1: split summaries + overall
         const danExp = explainNums(t.dan.slice().sort((a,b)=>a-b), out.statsPack);
         const tuoExp = explainNums(t.tuo.slice().sort((a,b)=>a-b), out.statsPack);
-        const allExp = explainNums(t.all.slice().sort((a,b)=>a-b), out.statsPack);
+        const allSorted = t.all.slice().sort((a,b)=>a-b);
+        const allExp = explainNums(allSorted, out.statsPack);
+
+        // 玄學命中：以「全組（膽+腳）」計
+        maybeInjectXuanxueChips(allExp, allSorted);
 
         const s1 = document.createElement("div");
         s1.className = "muted";
@@ -1013,7 +1241,12 @@
 
         const danExp = explainNums(t.dan.slice().sort((a,b)=>a-b), out.statsPack);
         const legsExp = explainNums(t.legs.slice().sort((a,b)=>a-b), out.statsPack);
-        const allExp = explainNums(t.all.slice().sort((a,b)=>a-b), out.statsPack);
+        const allSorted = t.all.slice().sort((a,b)=>a-b);
+        const allExp = explainNums(allSorted, out.statsPack);
+
+        // 玄學命中：以「膽」為主（因為你設計 keyNums=dan，亦符合多樣性用膽衡量）
+        const danSorted = t.dan.slice().sort((a,b)=>a-b);
+        maybeInjectXuanxueChips(allExp, danSorted);
 
         const s1 = document.createElement("div");
         s1.className = "muted";
@@ -1039,7 +1272,6 @@
         info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
         box.appendChild(info);
 
-        // chips use all-set description
         const chips = renderChips(allExp.chips);
         if (chips) box.appendChild(chips);
       }
@@ -1070,7 +1302,10 @@
       box.innerHTML = `<div><b>第 ${idx + 1} 注</b></div>`;
       box.appendChild(renderBallsRow(nums));
 
-      const exp = explainNums(nums.slice().sort((a,b)=>a-b), out.statsPack);
+      const numsSorted = nums.slice().sort((a,b)=>a-b);
+      const exp = explainNums(numsSorted, out.statsPack);
+      maybeInjectXuanxueChips(exp, numsSorted);
+
       box.appendChild(renderSummaryLine(exp.summary));
       const chips = renderChips(exp.chips);
       if (chips) box.appendChild(chips);
@@ -1094,6 +1329,90 @@
         const n = Number(statN.value);
         if (!N_ALLOWED.includes(n)) throw new Error("Invalid N");
         await getStats(n);
+      }
+
+      // ---------- Xuanxue runtime setup ----------
+      runtimeXX.enabled = false;
+      runtimeXX.autoPlan = false;
+      runtimeXX.weightedPick = false;
+      runtimeXX.excludeSet = null;
+      runtimeXX.pack = null;
+      runtimeXX.plan = null;
+      runtimeXX.luck = null;
+      runtimeXX.explainLevel = "standard";
+
+      const xx = getXuanxueState();
+      if (xx && xx.enabled) {
+        runtimeXX.enabled = true;
+        runtimeXX.autoPlan = !!xx.autoPlan;
+        runtimeXX.weightedPick = !!xx.weightedPick;
+        runtimeXX.explainLevel = xx.explainLevel || "standard";
+
+        // build exclude set (禁忌 + 排除4尾)
+        if (window.Xuanxue) {
+          const forbidden = window.Xuanxue.parseNumList(xx.forbidden, 10);
+          const ex = new Set(forbidden);
+          if (xx.excludeTail4) [4,14,24,34,44].forEach(n => ex.add(n));
+          runtimeXX.excludeSet = ex;
+        }
+      }
+
+      // ---------- Auto Plan behavior ----------
+      // 規則：buyMode=autoPlan 時，強制開啟 xxAutoPlan（即使 user 未 tick）
+      const chosenMode = buyMode.value;
+      const wantAutoPlan = (chosenMode === "autoPlan") || (runtimeXX.enabled && runtimeXX.autoPlan);
+
+      if (wantAutoPlan && window.Xuanxue) {
+        const level = computeLevel();
+        const maxAllowed = maxSetsAllowedByLevel(level);
+
+        // 用玄學 state xx 作 plan 參數
+        const plan = window.Xuanxue.recommendPlan(xx, maxAllowed);
+        runtimeXX.plan = plan;
+
+        // 回填到你現有 UI state
+        buyMode.value = plan.mode;
+
+        // setCount：回填 m（注意：若嚴格 level cap 會縮）
+        setCount.disabled = false;
+        updateSetCountOptions();
+
+        const maxNow = Number(setCount.options[setCount.options.length - 1]?.value || 1);
+        const mFinal = Math.max(1, Math.min(plan.m || 1, maxNow));
+        setCount.value = String(mFinal);
+
+        if (plan.mode === "multi") {
+          multiN.value = String(plan.n || 7);
+        }
+        if (plan.mode === "danTuo") {
+          danN.value = String(plan.d || 2);
+          updateTuoOptions();
+          tuoN.value = String(plan.t || 6);
+        }
+
+        if (xxPlanPreview) {
+          xxPlanPreview.textContent =
+            `建議買法：${plan.mode === "single" ? `單式 ${mFinal} 注` :
+              plan.mode === "multi" ? `${plan.n} 碼複式 × ${mFinal} 組` :
+              plan.mode === "danTuo" ? `${plan.d} 膽 + ${plan.t} 拖 × ${mFinal} 組` :
+              `5膽全餐 × ${mFinal} 組`
+            }（約 $${plan.cost || ""}）｜原因：${plan.reason || ""}`;
+        }
+      }
+
+      // ---------- Xuanxue weighted pack (for weighted picking) ----------
+      let cachedStatsPack = null;
+      const nForStats = Number(statN.value || 30);
+      if (statsCache.has(nForStats)) cachedStatsPack = statsCache.get(nForStats);
+
+      if (runtimeXX.enabled && runtimeXX.weightedPick && window.Xuanxue) {
+        runtimeXX.pack = window.Xuanxue.buildWeights(xx, cachedStatsPack);
+      }
+
+      // ---------- Luck context (time/direction/channel/shop) ----------
+      if (runtimeXX.enabled && window.Xuanxue) {
+        const seed = runtimeXX.pack ? runtimeXX.pack.seed : 1234567;
+        runtimeXX.luck = window.Xuanxue.recommendLuckContext(seed);
       }
 
       const mode = buyMode.value;
