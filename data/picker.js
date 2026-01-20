@@ -564,6 +564,20 @@
     }
   }
 
+  // ---------- RNG seed (for Xuanxue weighted pick) ----------
+  function genSeed() {
+    // Prefer crypto-quality randomness
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      const u = new Uint32Array(2);
+      crypto.getRandomValues(u);
+      // combine to a safe integer-ish range
+      return (u[0] * 4294967296 + u[1]) % 2147483647;
+    }
+    // fallback
+    return Math.floor((Date.now() ^ (Math.random() * 1e9)) % 2147483647);
+  }
+
+
   function sampleDistinct(k, excludeSet = null) {
     // 玄學加權抽號（如已啟用）
     if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue) {
@@ -1421,13 +1435,17 @@
       }
 
       // ---------- Xuanxue weighted pack (for weighted picking) ----------
-      // statsPack：你原本只喺 Advanced 2 才 fetch，呢度保持一致（如果已 cache 就用）
       let cachedStatsPack = null;
       const nForStats = Number(statN.value || 30);
       if (statsCache.has(nForStats)) cachedStatsPack = statsCache.get(nForStats);
 
       if (runtimeXX.enabled && runtimeXX.weightedPick && window.Xuanxue) {
         runtimeXX.pack = window.Xuanxue.buildWeights(xx, cachedStatsPack);
+
+        // ✅ Option 1: random-but-biased => new seed every Generate
+        if (runtimeXX.pack) {
+          runtimeXX.pack.seed = genSeed();
+        }
       }
 
       // ---------- Luck context (time/direction/channel/shop) ----------
