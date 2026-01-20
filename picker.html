@@ -30,6 +30,7 @@
               <option value="single">單式（6個號碼）</option>
               <option value="multi">複式（選擇號碼數）</option>
               <option value="danTuo">膽拖（選擇膽數＋腳數）</option>
+              <option value="autoPlan">交俾你建議（玄學 Auto Plan）</option>
             </optgroup>
 
             <optgroup label="進階買法（每次只生成 1 套）">
@@ -254,12 +255,163 @@
 
     </section>
 
+    <section class="card" id="xuanxueCard">
+      <h2>玄學（預設 Off）</h2>
+    
+      <div class="muted">
+        「交俾你建議」會自動啟用「玄學建議買法」。如想號碼亦偏向玄學取向，可再開啟「玄學加權取號」。
+      </div>
+    
+      <div class="grid2">
+        <div>
+          <label class="check"><input type="checkbox" id="xxAutoPlan" /> 玄學建議買法（Auto Plan）</label>
+          <div class="hint" id="xxAutoPlanHint"></div>
+        </div>
+    
+        <div>
+          <label class="check"><input type="checkbox" id="xxWeightedPick" /> 玄學加權取號（四源取號）</label>
+          <div class="hint" id="xxWeightedHint"></div>
+        </div>
+      </div>
+    
+      <div class="subhead">下注上限（只影響建議，不會用盡上限）</div>
+      <div class="grid2">
+        <div>
+          <label>最高下注金額（$）</label>
+          <input id="xxMaxBudget" type="number" min="10" step="10" value="500" />
+          <div class="hint">預設 $500；系統只會用保守比例（例如 $140 / $150），唔會填爆。</div>
+        </div>
+        <div>
+          <label>保守程度</label>
+          <select id="xxRiskLevel">
+            <option value="low">保守</option>
+            <option value="medium" selected>平衡（預設）</option>
+            <option value="high">進取</option>
+          </select>
+        </div>
+      </div>
+    
+      <div class="subhead">參考對象（最多 2 人，可選）</div>
+      <div class="grid2">
+        <div class="miniCard">
+          <div class="miniTitle">對象 A</div>
+          <div class="row">
+            <span class="muted small">生日格式</span>
+            <select id="xxDobPrecA">
+              <option value="NONE" selected>不輸入</option>
+              <option value="MD">月日（MM-DD）</option>
+              <option value="YMD">年月日（YYYY-MM-DD）</option>
+            </select>
+          </div>
+          <input id="xxDobA" type="text" placeholder="例如：03-14 或 1990-03-14" />
+          <div class="row">
+            <span class="muted small">性別</span>
+            <select id="xxGenderA">
+              <option value="unspecified" selected>不選</option>
+              <option value="male">男</option>
+              <option value="female">女</option>
+            </select>
+          </div>
+          <div class="hint" id="xxDobHintA"></div>
+        </div>
+    
+        <div class="miniCard">
+          <div class="miniTitle">對象 B（可選）</div>
+          <label class="check"><input type="checkbox" id="xxEnableB" /> 加入第二個對象</label>
+    
+          <div id="xxBBox" class="hidden">
+            <div class="row">
+              <span class="muted small">生日格式</span>
+              <select id="xxDobPrecB">
+                <option value="NONE" selected>不輸入</option>
+                <option value="MD">月日（MM-DD）</option>
+                <option value="YMD">年月日（YYYY-MM-DD）</option>
+              </select>
+            </div>
+            <input id="xxDobB" type="text" placeholder="例如：07-01 或 1988-07-01" />
+            <div class="row">
+              <span class="muted small">性別</span>
+              <select id="xxGenderB">
+                <option value="unspecified" selected>不選</option>
+                <option value="male">男</option>
+                <option value="female">女</option>
+              </select>
+            </div>
+    
+            <div class="row">
+              <span class="muted small">融合</span>
+              <select id="xxBlend">
+                <option value="0.5" selected>平均（50/50）</option>
+                <option value="0.7">偏向 A（70/30）</option>
+                <option value="0.3">偏向 B（30/70）</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    
+      <div class="subhead">幸運 / 禁忌 / 靈感數字（可選）</div>
+      <div class="grid3">
+        <div>
+          <label>幸運數字（最多 6）</label>
+          <input id="xxLucky" type="text" placeholder="例如：8,18,28" />
+          <div class="hint" id="xxLuckyHint"></div>
+        </div>
+        <div>
+          <label>禁忌數字（最多 10）</label>
+          <input id="xxForbidden" type="text" placeholder="例如：4,14,24" />
+          <label class="check"><input type="checkbox" id="xxExcludeTail4" /> 一鍵排除 4 尾（4/14/24/34/44）</label>
+          <div class="hint warn" id="xxForbiddenHint"></div>
+        </div>
+        <div>
+          <label>靈感數字（最多 6）</label>
+          <input id="xxInspiration" type="text" placeholder="例如：7,12,29" />
+          <div class="hint" id="xxInspirationHint"></div>
+        </div>
+      </div>
+    
+      <div class="subhead">四源取號（可選）</div>
+      <div class="grid3">
+        <label class="check"><input type="checkbox" id="xxEngineWuxing" checked /> 五行</label>
+        <label class="check"><input type="checkbox" id="xxEngineGua" checked /> 易卦</label>
+        <label class="check"><input type="checkbox" id="xxEngineStar9" checked /> 九宮飛星</label>
+        <label class="check"><input type="checkbox" id="xxEngineZodiac" checked /> 生肖（民俗）</label>
+      </div>
+    
+      <div class="grid2">
+        <div>
+          <label>玄學強度</label>
+          <select id="xxStrength">
+            <option value="light">輕（較接近隨機）</option>
+            <option value="medium" selected>中（預設）</option>
+            <option value="strong">強（更偏向高分號）</option>
+          </select>
+        </div>
+        <div>
+          <label>解釋顯示</label>
+          <select id="xxExplainLevel">
+            <option value="compact">簡潔</option>
+            <option value="standard" selected>標準（預設）</option>
+            <option value="detailed">詳細</option>
+          </select>
+        </div>
+      </div>
+    
+      <div class="row">
+        <button id="xxApplyPlan" class="ghost">套用建議買法</button>
+        <span class="muted" id="xxPlanPreview"></span>
+      </div>
+    </section>
+
+
     <section class="card">
       <h2>結果</h2>
       <div id="result"></div>
     </section>
   </main>
 
+  <script src="/data/xuanxue.js"></script>
   <script src="/data/picker.js"></script>
+
 </body>
 </html>
