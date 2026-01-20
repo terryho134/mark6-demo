@@ -137,6 +137,46 @@
     return r === idx ? 1 : 0.25;
   }
 
+  function comb(n, k) {
+    if (k < 0 || k > n) return 0;
+    k = Math.min(k, n - k);
+    let num = 1, den = 1;
+    for (let i = 1; i <= k; i++) {
+      num *= (n - (k - i));
+      den *= i;
+    }
+    return Math.round(num / den);
+  }
+
+  // ✅ NEW：按「時間段」派生 seed
+  // mode: "minute" | "shichen"
+  function deriveSeed(baseSeed, mode = "minute") {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + 1;
+    const d = now.getDate();
+    const hh = now.getHours();
+    const mm = now.getMinutes();
+
+    if (mode === "shichen") {
+      // 時辰：每2小時一段（子丑寅...）
+      const idx = Math.floor((hh + 1) / 2) % 12;
+      const key = `${y}-${m}-${d} shichen:${idx}`;
+      return (baseSeed ^ toIntSeed(key)) >>> 0;
+    }
+
+    // minute：每分鐘一段
+    const key = `${y}-${m}-${d} ${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;
+    return (baseSeed ^ toIntSeed(key)) >>> 0;
+  }
+
+  // ✅ NEW：reseed pack（唔改 weights/meta，只換 rng）
+  function reseedPack(pack, seed) {
+    if (!pack) return pack;
+    const s = (seed >>> 0);
+    return { ...pack, seed: s, rng: mulberry32(s) };
+  }
+
   function buildWeights(xuanxue, statsPack) {
     const strength = xuanxue.strength || "medium";
     const tempMap = { light: 1.35, medium: 1.0, strong: 0.8 };
@@ -160,7 +200,7 @@
 
     const blend = clamp(Number(xuanxue.blend || 0.5), 0, 1);
 
-    // seed: stable per inputs + today
+    // seed: stable per inputs + today（每日氣口）
     const dayKey = new Date();
     const daySeed = toIntSeed(`${dayKey.getFullYear()}-${dayKey.getMonth()+1}-${dayKey.getDate()}`);
     const baseSeed = toIntSeed(JSON.stringify({
@@ -175,7 +215,6 @@
     }));
 
     const raw = Array(50).fill(0);
-
     const eng = xuanxue.engines || { wuxing:true, gua:true, star9:true, zodiac:true };
 
     function scoreProfile(profile, n) {
@@ -236,7 +275,7 @@
     }
     if (sum > 0) for (let n = 1; n <= 49; n++) w[n] /= sum;
 
-    // mix a bit uniform
+    // mix a bit uniform so唔會「死押」幾粒
     const mixMap = { light: 0.15, medium: 0.10, strong: 0.06 };
     const mix = mixMap[strength] ?? 0.10;
     const available = 49 - forbiddenSet.size;
@@ -250,7 +289,7 @@
 
     return {
       ok: true,
-      seed: baseSeed >>> 0,
+      seed: (baseSeed >>> 0),
       rng: mulberry32(baseSeed >>> 0),
       weights: w,
       meta,
@@ -261,15 +300,6 @@
         zodiacIsFolklore: true
       }
     };
-  }
-
-  // ✅ NEW: allow picker.js to reseed per click (Option 1)
-  function reseedPack(pack, seed) {
-    if (!pack) return pack;
-    const s = (Number(seed) >>> 0);
-    pack.seed = s;
-    pack.rng = mulberry32(s);
-    return pack;
   }
 
   function weightedSampleWithoutReplacement(k, pack) {
@@ -323,17 +353,6 @@
     return 0;
   }
 
-  function comb(n, k) {
-    if (k < 0 || k > n) return 0;
-    k = Math.min(k, n - k);
-    let num = 1, den = 1;
-    for (let i = 1; i <= k; i++) {
-      num *= (n - (k - i));
-      den *= i;
-    }
-    return Math.round(num / den);
-  }
-
   function recommendPlan(xuanxue, maxAllowedSets) {
     const maxBudget = Number(xuanxue.maxBudget || 500);
     const baseCap = Math.min(maxBudget, 500);
@@ -341,6 +360,7 @@
     const ratioMap = { low: 0.25, medium: 0.35, high: 0.45 };
     const ratio = ratioMap[xuanxue.riskLevel || "medium"] ?? 0.35;
 
+    // 只用上限的一部份（唔填爆）
     let targetSpend = Math.round((baseCap * ratio) / 10) * 10;
     targetSpend = clamp(targetSpend, 60, 280);
 
@@ -376,7 +396,6 @@
       if (cost > targetSpend + 10) continue;
 
       c.m = clamp(c.m, 1, maxAllowedSets || 10);
-
       const cost2 = costOfPlan(c);
       if (cost2 <= 0) continue;
 
@@ -393,10 +412,17 @@
 
       const closeness = -Math.abs(targetSpend - cost2) / 40;
       const score = pref + closeness;
+
       if (score > bestScore) { bestScore = score; best = { ...c, cost: cost2, targetSpend }; }
     }
 
-    if (!best) best = { mode:"single", m: clamp(Math.floor(targetSpend/10), 3, maxAllowedSets||10), cost: clamp(Math.floor(targetSpend/10),3,10)*10, targetSpend, reason:"保守分散：多注單式" };
+    if (!best) best = {
+      mode:"single",
+      m: clamp(Math.floor(targetSpend/10), 3, maxAllowedSets||10),
+      cost: clamp(Math.floor(targetSpend/10),3,10)*10,
+      targetSpend,
+      reason:"保守分散：多注單式"
+    };
 
     return best;
   }
@@ -439,15 +465,74 @@
     return { luckyHit, inspirationHit, forbiddenHit, wux, gua, star, zod };
   }
 
+  // ✅ NEW：把「點解抽到呢粒」講清楚（用於結果區）
+  function explainTicket(numsSorted, pack, explainLevel = "standard") {
+    if (!pack || !pack.meta) return { lines: [] };
+
+    const lines = [];
+    for (const n of numsSorted) {
+      const m = pack.meta[n];
+      if (!m) continue;
+
+      const bd = m.breakdown || {};
+      const hit = {
+        wux: (bd.wuxing || 0) >= 0.8,
+        gua: (bd.gua || 0) >= 0.8,
+        star: (bd.star9 || 0) >= 0.8,
+        zod: (bd.zodiac || 0) >= 0.8,
+      };
+
+      const tags = [];
+      if (hit.wux) tags.push("五行✓");
+      if (hit.gua) tags.push("易卦✓");
+      if (hit.star) tags.push("九宮✓");
+      if (hit.zod) tags.push("生肖✓");
+
+      const bonus = [];
+      if ((bd.luckyBonus || 0) > 0.001) bonus.push("幸運+");
+      if ((bd.inspirationBonus || 0) > 0.001) bonus.push("靈感+");
+      if ((bd.statsHint || 0) > 0.001) bonus.push("統計微調");
+
+      if (explainLevel === "compact") {
+        lines.push(`${String(n).padStart(2,"0")}：${tags.join(" ")}${bonus.length ? `（${bonus.join("／")}）` : ""}`);
+        continue;
+      }
+
+      if (explainLevel === "detailed") {
+        const d =
+          `五行${(bd.wuxing||0).toFixed(2)} ` +
+          `易卦${(bd.gua||0).toFixed(2)} ` +
+          `九宮${(bd.star9||0).toFixed(2)} ` +
+          `生肖${(bd.zodiac||0).toFixed(2)}` +
+          `${(bd.luckyBonus||0)>0 ? `｜幸運+${(bd.luckyBonus||0).toFixed(1)}` : ""}` +
+          `${(bd.inspirationBonus||0)>0 ? `｜靈感+${(bd.inspirationBonus||0).toFixed(1)}` : ""}` +
+          `${(bd.statsHint||0)>0 ? `｜統計+${(bd.statsHint||0).toFixed(2)}` : ""}`;
+
+        lines.push(`${String(n).padStart(2,"0")}：${tags.join(" ") || "（未中特徵）"}｜${d}`);
+        continue;
+      }
+
+      // standard
+      lines.push(`${String(n).padStart(2,"0")}：${tags.join(" ") || "（較偏隨機）"}${bonus.length ? `（${bonus.join("／")}）` : ""}`);
+    }
+
+    return { lines };
+  }
+
   window.Xuanxue = {
     parseNumList,
     parseDob,
     buildWeights,
-    reseedPack, // ✅ add
     weightedSampleWithoutReplacement,
     recommendPlan,
     recommendLuckContext,
     explainXuanxueHit,
+
+    // ✅ new exports
+    deriveSeed,
+    reseedPack,
+    explainTicket,
+
     PRICE_PER_BET,
   };
 })();
