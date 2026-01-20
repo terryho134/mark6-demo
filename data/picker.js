@@ -835,10 +835,24 @@
       if (ex) for (const x of ex) merged.add(x);
       for (const x of danSet) merged.add(x);
 
-      const tuo = sampleDistinct(t, merged);
-
+      const maxTuo = 49 - d;
+      const isFullTuo = (t === maxTuo);
+      
+      // 腳全餐：腳 = 除咗膽 +（禁忌/排除）之外的所有號碼
+      let tuo;
+      if (isFullTuo) {
+        tuo = [];
+        for (let i = 1; i <= 49; i++) {
+          if (merged.has(i)) continue; // merged = 禁忌 + 膽
+          tuo.push(i);
+        }
+        // full set 本身已經係排序
+      } else {
+        tuo = sampleDistinct(t, merged);
+      }
+      
       const all = [...dan, ...tuo].sort((a, b) => a - b);
-      return { kind: "danTuo", dan, tuo, all, keyNums: all };
+      return { kind: "danTuo", dan, tuo, all, keyNums: all, isFullTuo };
     }
 
     // ✅ 5膽全餐：基本買法 -> 生成「膽 + 腳」，組與組多樣性以「膽」衡量
@@ -1275,44 +1289,60 @@
 
       if (t.kind === "danTuo") {
         box.appendChild(renderBallsRow(t.dan, `膽（${t.dan.length}）`));
-        box.appendChild(renderBallsRow(t.tuo, `腳／拖（${t.tuo.length}）`));
-
+        box.appendChild(renderBallsRow(t.tuo, `腳／拖（${t.tuo.length}${t.isFullTuo ? "｜全餐" : ""}）`));
+      
         // v2.1: split summaries + overall
         const danExp = explainNums(t.dan.slice().sort((a,b)=>a-b), out.statsPack);
         const tuoExp = explainNums(t.tuo.slice().sort((a,b)=>a-b), out.statsPack);
         const allExp = explainNums(t.all.slice().sort((a,b)=>a-b), out.statsPack);
-
+      
+        // ✅ 玄學命中：如果腳全餐，只加落「膽」；否則照舊用全組
+        if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue) {
+          const targetNums = (t.isFullTuo ? t.dan : t.all).slice().sort((a,b)=>a-b);
+          const hit = window.Xuanxue.explainXuanxueHit(targetNums, runtimeXX.pack);
+          if (hit) {
+            const prefix = t.isFullTuo ? "（膽）" : "";
+            if (runtimeXX.explainLevel !== "compact") {
+              (t.isFullTuo ? danExp : allExp).chips.unshift(`玄學${prefix}：幸運命中${hit.luckyHit}｜靈感命中${hit.inspirationHit}`);
+            }
+            if (runtimeXX.explainLevel === "detailed") {
+              (t.isFullTuo ? danExp : allExp).chips.unshift(`四源命中${prefix}：五行${hit.wux}｜易卦${hit.gua}｜九宮${hit.star}｜生肖${hit.zod}`);
+            }
+          }
+        }
+      
         const s1 = document.createElement("div");
         s1.className = "muted";
         s1.style.marginTop = "6px";
         s1.textContent = `膽：${danExp.summary}`;
         box.appendChild(s1);
-
+      
         const s2 = document.createElement("div");
         s2.className = "muted";
         s2.style.marginTop = "4px";
         s2.textContent = `腳：${tuoExp.summary}`;
         box.appendChild(s2);
-
+      
         const s3 = document.createElement("div");
         s3.className = "muted";
         s3.style.marginTop = "4px";
         s3.textContent = `全組（膽+腳）：${allExp.summary}`;
         box.appendChild(s3);
-
+      
         const bets = danTuoBets(t.dan.length, t.tuo.length);
         const info = document.createElement("div");
         info.className = "muted";
         info.style.marginTop = "6px";
         info.textContent = `共 ${bets} 注｜金額 $${bets * PRICE_PER_BET}`;
         box.appendChild(info);
-
-        const chips = renderChips(allExp.chips);
+      
+        // ✅ chips：腳全餐 -> 用 danExp.chips；否則用 allExp.chips
+        const chips = renderChips(t.isFullTuo ? danExp.chips : allExp.chips);
         if (chips) box.appendChild(chips);
-
-        // ✅ 逐粒玄學解釋（用全組）
+      
+        // ✅ 逐粒玄學解釋：腳全餐 -> 只解釋膽；否則解釋全組
         if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue && window.Xuanxue.explainTicket) {
-          const xxNums = t.all.slice().sort((a,b)=>a-b);
+          const xxNums = (t.isFullTuo ? t.dan : t.all).slice().sort((a,b)=>a-b);
           const xxExp = window.Xuanxue.explainTicket(xxNums, runtimeXX.pack, runtimeXX.explainLevel);
           const xxBox = renderXuanxueExplain(xxExp && xxExp.lines);
           if (xxBox) box.appendChild(xxBox);
