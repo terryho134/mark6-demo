@@ -1353,46 +1353,62 @@
       if (t.kind === "full5dan") {
         box.appendChild(renderBallsRow(t.dan, `膽（5）`));
         box.appendChild(renderBallsRow(t.legs, `腳（44）`));
-
+      
         const danExp = explainNums(t.dan.slice().sort((a,b)=>a-b), out.statsPack);
         const legsExp = explainNums(t.legs.slice().sort((a,b)=>a-b), out.statsPack);
         const allExp = explainNums(t.all.slice().sort((a,b)=>a-b), out.statsPack);
-
+      
+        // ✅ 玄學命中：只加落「膽」
+        if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue) {
+          const hit = window.Xuanxue.explainXuanxueHit(t.dan.slice().sort((a,b)=>a-b), runtimeXX.pack);
+          if (hit) {
+            const prefix = "（膽）";
+            if (runtimeXX.explainLevel !== "compact") {
+              danExp.chips.unshift(`玄學${prefix}：幸運命中${hit.luckyHit}｜靈感命中${hit.inspirationHit}`);
+            }
+            if (runtimeXX.explainLevel === "detailed") {
+              danExp.chips.unshift(`四源命中${prefix}：五行${hit.wux}｜易卦${hit.gua}｜九宮${hit.star}｜生肖${hit.zod}`);
+            }
+          }
+        }
+      
         const s1 = document.createElement("div");
         s1.className = "muted";
         s1.style.marginTop = "6px";
         s1.textContent = `膽：${danExp.summary}`;
         box.appendChild(s1);
-
+      
         const s2 = document.createElement("div");
         s2.className = "muted";
         s2.style.marginTop = "4px";
         s2.textContent = `腳：${legsExp.summary}`;
         box.appendChild(s2);
-
+      
         const s3 = document.createElement("div");
         s3.className = "muted";
         s3.style.marginTop = "4px";
         s3.textContent = `全組（膽+腳）：${allExp.summary}`;
         box.appendChild(s3);
-
+      
         const info = document.createElement("div");
         info.className = "muted";
         info.style.marginTop = "6px";
         info.textContent = `共 44 注｜金額 $${44 * PRICE_PER_BET}`;
         box.appendChild(info);
-
-        const chips = renderChips(allExp.chips);
+      
+        // ✅ chips：只顯示「膽」的 chips
+        const chips = renderChips(danExp.chips);
         if (chips) box.appendChild(chips);
-
-        // ✅ 逐粒玄學解釋（用全組）
+      
+        // ✅ 逐粒玄學解釋：只解釋膽
         if (runtimeXX.enabled && runtimeXX.weightedPick && runtimeXX.pack && window.Xuanxue && window.Xuanxue.explainTicket) {
-          const xxNums = t.all.slice().sort((a,b)=>a-b);
+          const xxNums = t.dan.slice().sort((a,b)=>a-b);
           const xxExp = window.Xuanxue.explainTicket(xxNums, runtimeXX.pack, runtimeXX.explainLevel);
           const xxBox = renderXuanxueExplain(xxExp && xxExp.lines);
           if (xxBox) box.appendChild(xxBox);
         }
       }
+
 
       result.appendChild(box);
     });
