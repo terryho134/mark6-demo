@@ -1,5 +1,6 @@
 // data/xuanxue.js
 (() => {
+  console.log("[XX] xuanxue.js start");
   const PRICE_PER_BET = 10;
 
   function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
@@ -1001,4 +1002,5 @@
 
     PRICE_PER_BET,
   };
+  console.log("[XX] xuanxue.js end, window.Xuanxue?", !!window.Xuanxue);
 })();
