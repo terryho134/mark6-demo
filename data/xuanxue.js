@@ -298,6 +298,12 @@
       inspiration,
       notes: {
         zodiacIsFolklore: true
+      },
+      ctx: {                // ✅ NEW: for human explanation
+        pA, pB, blend,
+        daySeed,
+        engines: eng,
+        strength
       }
     };
   }
@@ -465,57 +471,149 @@
     return { luckyHit, inspirationHit, forbiddenHit, wux, gua, star, zod };
   }
 
-  // ✅ NEW：把「點解抽到呢粒」講清楚（用於結果區）
+  function wuxingName(en) {
+    return en === "water" ? "水" :
+           en === "wood"  ? "木" :
+           en === "fire"  ? "火" :
+           en === "earth" ? "土" : "金";
+  }
+  
+  function trigramName(idx) {
+    // 8卦：0..7（純命名用，唔宣稱傳統對應）
+    const arr = ["乾", "兌", "離", "震", "巽", "坎", "艮", "坤"];
+    return arr[((idx % 8) + 8) % 8];
+  }
+  
+  function zodiacName(idx) {
+    // 以你現有 (yy-4)%12 算法：0 對應「鼠」係常見寫法
+    const arr = ["鼠","牛","虎","兔","龍","蛇","馬","羊","猴","雞","狗","豬"];
+    return arr[((idx % 12) + 12) % 12];
+  }
+  
+  function calcWantedWuxing(profile) {
+    const map = ["water","wood","fire","earth","metal"];
+    const g = profile?.gender || "unspecified";
+    const gCode = g === "male" ? 1 : g === "female" ? 2 : 0;
+    const mm = profile?.dob?.month || 0;
+    const dd = profile?.dob?.day || 0;
+    return map[(mm + dd + gCode) % 5];
+  }
+  
+  function calcGuaIdx(profile) {
+    const mm = profile?.dob?.month || 0;
+    const dd = profile?.dob?.day || 0;
+    const yy = profile?.dob?.year ? (profile.dob.year % 8) : 0;
+    return (dd + mm * 2 + yy) % 8;
+  }
+  
+  function calcStarTargets(profile, daySeed) {
+    const mm = profile?.dob?.month || 0;
+    const dd = profile?.dob?.day || 0;
+    const s1 = ((mm + dd + (daySeed % 9)) % 9) + 1;
+    const s2 = ((dd + (daySeed % 7)) % 9) + 1;
+    return [s1, s2];
+  }
+  
+  // ✅ 人話版：唔輸出分數，淨講「命中咩」同「點解」
   function explainTicket(numsSorted, pack, explainLevel = "standard") {
-    if (!pack || !pack.meta) return { lines: [] };
-
+    if (!pack || !pack.meta) return null;
+    const ctx = pack.ctx || {};
+    const pA = ctx.pA || null;
+    const pB = ctx.pB || null;
+    const daySeed = ctx.daySeed || 0;
+    const eng = ctx.engines || { wuxing:true, gua:true, star9:true, zodiac:true };
+  
+    // 用 A 為主解釋（B 有開就講「綜合 A/B」但唔深入）
+    const profileForExplain = pA || pB || { dob:null, gender:"unspecified" };
+    const hasB = !!pB;
+  
+    const wantedWux = calcWantedWuxing(profileForExplain); // "water"...
+    const wantedGua = calcGuaIdx(profileForExplain);       // 0..7
+    const wantedStars = calcStarTargets(profileForExplain, daySeed); // [1..9, 1..9]
+  
     const lines = [];
+  
     for (const n of numsSorted) {
       const m = pack.meta[n];
       if (!m) continue;
-
+  
+      const tags = m.tags || [];
+      const hits = [];
+      const reasons = [];
+  
+      // lucky / inspiration（以「你輸入」角度）
+      if (tags.includes("lucky")) {
+        hits.push("幸運號碼");
+        reasons.push("屬於你輸入的幸運號碼");
+      }
+      if (tags.includes("inspiration")) {
+        hits.push("靈感號碼");
+        reasons.push("屬於你輸入的靈感號碼");
+      }
+  
+      // 四源命中判斷：沿用你現有 threshold（>=0.8）
       const bd = m.breakdown || {};
-      const hit = {
-        wux: (bd.wuxing || 0) >= 0.8,
-        gua: (bd.gua || 0) >= 0.8,
-        star: (bd.star9 || 0) >= 0.8,
-        zod: (bd.zodiac || 0) >= 0.8,
-      };
-
-      const tags = [];
-      if (hit.wux) tags.push("五行✓");
-      if (hit.gua) tags.push("易卦✓");
-      if (hit.star) tags.push("九宮✓");
-      if (hit.zod) tags.push("生肖✓");
-
-      const bonus = [];
-      if ((bd.luckyBonus || 0) > 0.001) bonus.push("幸運+");
-      if ((bd.inspirationBonus || 0) > 0.001) bonus.push("靈感+");
-      if ((bd.statsHint || 0) > 0.001) bonus.push("統計微調");
-
+      const hitWux   = eng.wuxing && (bd.wuxing  || 0) >= 0.8;
+      const hitGua   = eng.gua    && (bd.gua     || 0) >= 0.8;
+      const hitStar  = eng.star9  && (bd.star9   || 0) >= 0.8;
+      const hitZod   = eng.zodiac && (bd.zodiac  || 0) >= 0.8;
+  
+      if (hitWux) {
+        const map = ["water","wood","fire","earth","metal"];
+        const elem = map[n % 5];
+        hits.push("五行");
+        reasons.push(`你資料推算偏向「${wuxingName(wantedWux)}」，而 ${String(n).padStart(2,"0")} 對應「${wuxingName(elem)}」`);
+      }
+  
+      if (hitGua) {
+        const idx = n % 8;
+        hits.push("易卦");
+        reasons.push(`你資料推算的卦象偏向「${trigramName(wantedGua)}」，而 ${String(n).padStart(2,"0")}（取餘數）落在「${trigramName(idx)}」`);
+      }
+  
+      if (hitStar) {
+        const star = (n % 9) + 1;
+        hits.push("九宮");
+        reasons.push(`今日推算的幸運星位包括「${wantedStars[0]}」或「${wantedStars[1]}」，而 ${String(n).padStart(2,"0")} 對應星位「${star}」`);
+      }
+  
+      if (eng.zodiac) {
+        // 生肖：如果冇年份，你現有 scoreZodiac 會回 0.35（即唔會 >=0.8）
+        // 所以命中只會喺有年份先出現；但我仍然提供「未提供年份」的人話提示
+        const yy = profileForExplain?.dob?.year;
+        if (!yy) {
+          if (explainLevel === "detailed") {
+            reasons.push("生肖需要出生年份；未提供年份，所以此項只作參考，不作命中判斷");
+          }
+        } else if (hitZod) {
+          const idx = (yy - 4) % 12;
+          const r = n % 12;
+          hits.push("生肖");
+          reasons.push(`以你輸入出生年推算生肖為「${zodiacName(idx)}」（民俗算法），而 ${String(n).padStart(2,"0")} 對應位亦落在「${zodiacName(r)}」`);
+        }
+      }
+  
+      // 組句（唔用分數）
+      const nTxt = String(n).padStart(2, "0");
+  
+      if (!hits.length) {
+        // ✅ 無命中：一句就夠（避免用分數）
+        lines.push(`${nTxt}：未見明顯命中特徵（偏隨機取號）`);
+        continue;
+      }
+  
+      // ✅ 有命中：列出命中項
+      const hitTxt = `命中：${hits.join("、")}${hasB ? "（綜合A/B）" : ""}`;
+  
       if (explainLevel === "compact") {
-        lines.push(`${String(n).padStart(2,"0")}：${tags.join(" ")}${bonus.length ? `（${bonus.join("／")}）` : ""}`);
-        continue;
+        lines.push(`${nTxt}：${hitTxt}`);
+      } else {
+        // standard / detailed：加簡短原因（每粒最多 1–2 句，避免太長）
+        const why = reasons.slice(0, explainLevel === "detailed" ? 3 : 2).join("；");
+        lines.push(`${nTxt}：${hitTxt}｜原因：${why}`);
       }
-
-      if (explainLevel === "detailed") {
-        const d =
-          `五行${(bd.wuxing||0).toFixed(2)} ` +
-          `易卦${(bd.gua||0).toFixed(2)} ` +
-          `九宮${(bd.star9||0).toFixed(2)} ` +
-          `生肖${(bd.zodiac||0).toFixed(2)}` +
-          `${(bd.luckyBonus||0)>0 ? `｜幸運+${(bd.luckyBonus||0).toFixed(1)}` : ""}` +
-          `${(bd.inspirationBonus||0)>0 ? `｜靈感+${(bd.inspirationBonus||0).toFixed(1)}` : ""}` +
-          `${(bd.statsHint||0)>0 ? `｜統計+${(bd.statsHint||0).toFixed(2)}` : ""}`;
-
-        lines.push(`${String(n).padStart(2,"0")}：${tags.join(" ") || "（未中特徵）"}｜${d}`);
-        continue;
-      }
-
-      // standard
-      lines.push(`${String(n).padStart(2,"0")}：${tags.join(" ") || "（較偏隨機）"}${bonus.length ? `（${bonus.join("／")}）` : ""}`);
     }
-
+  
     return { lines };
   }
 
