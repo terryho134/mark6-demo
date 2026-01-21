@@ -402,6 +402,24 @@
       if (b < a) [a, b] = [b, a];
       return a + Math.floor(rand() * (b - a + 1));
     }
+    function clampInt(x, a, b) {
+      x = Math.floor(x);
+      return Math.max(a, Math.min(b, x));
+    }
+    
+    function weightedPickInt(items) {
+      // items: [{ v: number, w: number }]
+      let sum = 0;
+      for (const it of items) sum += it.w;
+      if (sum <= 0) return items[0]?.v ?? 1;
+    
+      let r = rand() * sum;
+      for (const it of items) {
+        r -= it.w;
+        if (r <= 0) return it.v;
+      }
+      return items[items.length - 1].v;
+    }
   
     // ---------- 你指定的「出現機會排序」 ----------
     // 只要數值由高到低就得；我用 35/22/14/11/8/6/4（比例明顯、又唔會太極端）
@@ -429,16 +447,31 @@
       let m = 1;
   
       if (c.mode === "single") {
-        const maxM = Math.floor((targetSpend + 10) / 10);
+        const maxM = Math.floor((targetSpend + 10) / 10);  // 預算上最多可買幾注
+        const hi = clampInt(Math.min(maxM, capM), 1, capM); // ✅ 上限先受 capM 影響
       
-        // ✅ 上限先受 capM 影響
-        const hi = clamp(maxM, 3, capM);
+        // 如果 hi 只有 1，就無得揀
+        if (hi <= 1) {
+          c.m = 1;
+        } else {
+          // ✅ 你想要嘅分佈：2–4最多、5–8其次、1/9/10最少
+          // 做法：對每個 m 設權重（越大越常出）
+          const options = [];
+          for (let m = 1; m <= hi; m++) {
+            let w = 1; // default（少見）
       
-        // ✅ 低位用 hi 計，確保唔會出現 lo > hi
-        const lo = clamp(Math.floor(hi * 0.6), 3, hi);
+            if (m >= 2 && m <= 4) w = 12;      // 最常見
+            else if (m >= 5 && m <= 8) w = 4;  // 其次
+            else if (m === 1) w = 1;           // 少見（保持低）
+            else if (m === 9 || m === 10) w = 1; // 少見（保持低）
       
-        c.m = randInt(lo, hi);
+            options.push({ v: m, w });
+          }
+      
+          c.m = weightedPickInt(options);
+        }
       }
+
   
       if (c.mode === "multi") {
         const per = comb(c.n, 6) * 10; // 7->70, 8->280
