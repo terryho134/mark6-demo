@@ -362,107 +362,166 @@
   function recommendPlan(xuanxue, maxAllowedSets) {
     const maxBudget = Number(xuanxue.maxBudget || 500);
     const baseCap = Math.min(maxBudget, 500);
-
+  
     const ratioMap = { low: 0.25, medium: 0.35, high: 0.45 };
     const ratio = ratioMap[xuanxue.riskLevel || "medium"] ?? 0.35;
-
+  
     const goal = xuanxue.goal || "hit";
-
+  
     // 只用上限的一部份（唔填爆）
     let targetSpend = Math.round((baseCap * ratio) / 10) * 10;
     targetSpend = clamp(targetSpend, 60, 280);
-
+  
     const hasAnyDob =
-      (xuanxue.dobPrecA && xuanxue.dobPrecA !== "NONE" && String(xuanxue.dobA||"").trim()) ||
-      (xuanxue.enableB && xuanxue.dobPrecB && xuanxue.dobPrecB !== "NONE" && String(xuanxue.dobB||"").trim());
-
+      (xuanxue.dobPrecA && xuanxue.dobPrecA !== "NONE" && String(xuanxue.dobA || "").trim()) ||
+      (xuanxue.enableB && xuanxue.dobPrecB && xuanxue.dobPrecB !== "NONE" && String(xuanxue.dobB || "").trim());
+  
     const luckyCnt = parseNumList(xuanxue.lucky, 6).length;
     const inspCnt = parseNumList(xuanxue.inspiration, 6).length;
     const focusScore = (hasAnyDob ? 2 : 0) + luckyCnt * 2 + inspCnt;
-
+  
+    // --- 你指定的出現機會排序（高 → 低） ---
+    // single > multi7 > multi8 > danTuo5膽 > danTuo4膽 > danTuo3膽 > danTuo2膽
+    function baseRankScore(c) {
+      if (c.mode === "single") return 100;
+  
+      if (c.mode === "multi") {
+        if (Number(c.n) === 7) return 85;
+        if (Number(c.n) === 8) return 75;
+        return 60;
+      }
+  
+      if (c.mode === "danTuo") {
+        const d = Number(c.d);
+        if (d === 5) return 65;
+        if (d === 4) return 55;
+        if (d === 3) return 45;
+        if (d === 2) return 35;
+        return 30;
+      }
+  
+      return 0;
+    }
+  
+    // --- Candidates（按你排序優先放，但實際用 baseRankScore 主導） ---
     const candidates = [];
-    candidates.push({ mode:"single", m: clamp(Math.floor(targetSpend / 10), 3, 10), reason:"分散氣口：以多注單式為主" });
-    candidates.push({ mode:"multi", n:7, m: clamp(Math.floor(targetSpend / 70) || 1, 1, 2), reason:"聚氣：以7碼複式集中主題" });
-
-    if ((xuanxue.riskLevel === "high") && targetSpend >= 280) {
-      candidates.push({ mode:"multi", n:8, m:1, reason:"進取聚焦：8碼複式（成本較高）" });
+  
+    // 1) 單式（最常見）
+    candidates.push({
+      mode: "single",
+      m: clamp(Math.floor(targetSpend / 10), 3, 10),
+      reason: "分散氣勢：以多注單式為主"
+    });
+  
+    // 2) 7碼複式
+    candidates.push({
+      mode: "multi",
+      n: 7,
+      m: clamp(Math.floor(targetSpend / 70) || 1, 1, 2),
+      reason: "聚氣：以7碼複式集中主題"
+    });
+  
+    // 3) 8碼複式（較罕見）
+    if (xuanxue.riskLevel === "high" && targetSpend >= 280) {
+      candidates.push({
+        mode: "multi",
+        n: 8,
+        m: 1,
+        reason: "進取聚焦：8碼複式（成本較高）"
+      });
+    } else {
+      // 即使非 high，都可以擺入候選，但會較少中選（因 baseRank + cost）
+      candidates.push({
+        mode: "multi",
+        n: 8,
+        m: 1,
+        reason: "加一手聚焦：8碼複式（視乎預算）"
+      });
     }
-
-    candidates.push({ mode:"danTuo", d:2, t:6, m:1, reason:"以小膽拖聚氣：2膽6拖（成本適中）" });
-    candidates.push({ mode:"danTuo", d:3, t:5, m:1, reason:"以小膽拖聚氣：3膽5拖（成本適中）" });
-
-    if (baseCap >= 440 && xuanxue.riskLevel === "high") {
-      candidates.push({ mode:"full5dan", m:1, reason:"大包圍：5膽全餐（但仍低於$500）" });
-    }
-
+  
+    // 4-7) 膽拖（你要：腳全餐只解釋膽，所以以「全拖」作候選）
+    // 5膽：5膽 + 44拖；4膽：4膽 + 45拖；3膽：3膽 + 46拖；2膽：2膽 + 47拖
+    candidates.push({ mode: "danTuo", d: 5, t: 44, m: 1, reason: "以膽主氣：5膽全拖（守中帶攻）" });
+    candidates.push({ mode: "danTuo", d: 4, t: 45, m: 1, reason: "以膽主氣：4膽全拖（穩）" });
+    candidates.push({ mode: "danTuo", d: 3, t: 46, m: 1, reason: "以膽主氣：3膽全拖（中位）" });
+    candidates.push({ mode: "danTuo", d: 2, t: 47, m: 1, reason: "以膽主氣：2膽全拖（入門）" });
+  
     let best = null;
     let bestScore = -Infinity;
-
+  
     for (const c of candidates) {
       c.m = clamp(c.m || 1, 1, 10);
+  
       const cost = costOfPlan(c);
+      // 太貴就直接跳過（比 targetSpend 多太多）
       if (cost > targetSpend + 10) continue;
-
+  
+      // 受 level cap 影響（例如 Level 2 最多5組；Level3最多1組）
       c.m = clamp(c.m, 1, maxAllowedSets || 10);
+  
       const cost2 = costOfPlan(c);
       if (cost2 <= 0) continue;
-
-      let pref = 0;
-      
-      // 原本 focusScore 的邏輯保留
+  
+      // --- 核心：用 baseRankScore 做「出現機會」主導 ---
+      let pref = baseRankScore(c);
+  
+      // --- focusScore：只作輕微微調（唔推翻排序） ---
       if (focusScore >= 4) {
-        if (c.mode === "multi") pref += 2.0;
-        if (c.mode === "danTuo") pref += 1.0;
+        if (c.mode === "multi") pref += 0.8;
+        if (c.mode === "danTuo") pref += 0.4;
       } else if (focusScore >= 2) {
-        if (c.mode === "danTuo") pref += 1.5;
-        if (c.mode === "multi") pref += 1.0;
+        if (c.mode === "danTuo") pref += 0.6;
+        if (c.mode === "multi") pref += 0.3;
       } else {
-        if (c.mode === "single") pref += 1.2;
+        if (c.mode === "single") pref += 0.5;
       }
-      
-      // ✅ 新增：按「目的」再推一推（簡單粗暴但有效）
+  
+      // --- goal：同樣只作輕微微調（唔用「加分」概念都無所謂，呢度係內部計算） ---
       if (goal === "hit") {
-        if (c.mode === "single") pref += 2.0;
-        if (c.mode === "danTuo") pref += 0.8;
-        if (c.mode === "multi")  pref -= 0.3;
+        if (c.mode === "single") pref += 0.8;
+        if (c.mode === "multi") pref += 0.2;
+        if (c.mode === "danTuo") pref -= 0.1;
+      } else if (goal === "boom") {
+        if (c.mode === "multi") pref += 0.8;
+        if (c.mode === "danTuo") pref += 0.2;
+        if (c.mode === "single") pref -= 0.1;
+      } else if (goal === "steady") {
+        if (c.mode === "danTuo") pref += 0.6;
+        if (c.mode === "single") pref += 0.2;
       }
-      
-      if (goal === "boom") {
-        if (c.mode === "multi")  pref += 2.0;
-        if (c.mode === "danTuo") pref += 1.2;
-        if (c.mode === "single") pref -= 0.4;
-      }
-      
-      if (goal === "steady") {
-        if (c.mode === "danTuo") pref += 2.0;
-        if (c.mode === "single") pref += 0.6;
-        if (c.mode === "multi")  pref -= 0.2;
-        if (c.mode === "full5dan") pref += 0.8; // 若你有推 full5dan
-      }
-
-
-      const closeness = -Math.abs(targetSpend - cost2) / 40;
+  
+      // --- closeness：縮細，避免金額差距推翻排序 ---
+      const closeness = -Math.abs(targetSpend - cost2) / 120;
+  
       const score = pref + closeness;
-
-      if (score > bestScore) { bestScore = score; best = { ...c, cost: cost2, targetSpend }; }
+  
+      if (score > bestScore) {
+        bestScore = score;
+        best = { ...c, cost: cost2, targetSpend };
+      }
     }
-
-    if (!best) best = {
-      mode:"single",
-      m: clamp(Math.floor(targetSpend/10), 3, maxAllowedSets||10),
-      cost: clamp(Math.floor(targetSpend/10),3,10)*10,
-      targetSpend,
-      reason:"保守分散：多注單式"
-    };
-
-    const goalText = goal === "hit" ? "求中率（散）"
-      : goal === "boom" ? "求爆（聚）"
-      : "求穩（守）";
-    
+  
+    // fallback
+    if (!best) {
+      best = {
+        mode: "single",
+        m: clamp(Math.floor(targetSpend / 10), 3, maxAllowedSets || 10),
+        cost: clamp(Math.floor(targetSpend / 10), 3, 10) * 10,
+        targetSpend,
+        reason: "保守分散：多注單式"
+      };
+    }
+  
+    const goalText =
+      goal === "hit" ? "求中率（散）" :
+      goal === "boom" ? "求爆（聚）" :
+      "求穩（守）";
+  
     best.reason = `${best.reason || ""}｜目的：${goalText}`;
-
+  
     return best;
   }
+
 
   function recommendLuckContext(seed) {
     const dirs = ["東", "東南", "南", "西南", "西", "西北", "北", "東北"];
@@ -613,11 +672,11 @@
   
     const parts = [];
   
-    // 1) 今日運勢（你已統一叫今日運勢）
+    // 1) 今日運勢
     if (eng.star9) {
-      parts.push(`今日運勢走勢偏向九宮「${wantedStars[0]} / ${wantedStars[1]}」`);
+      parts.push(`今日運勢：九宮主星落「${wantedStars[0]} / ${wantedStars[1]}」`);
     } else {
-      parts.push(`今日運勢以「隨機流轉」為主`);
+      parts.push(`今日運勢：九宮不取，只留作平衡參考`);
     }
   
     // 2) 主象（有資料先講）
@@ -628,8 +687,8 @@
     if (main.length) {
       parts.push(`主象：${main.join("，")}`);
     } else {
-      // 冇輸入資料就唔好「推算你偏向水」：改做「只作號碼對照/運勢」
-      parts.push(`主象：未立個人命盤，先以「今日運勢＋號碼對照」行`);
+      // 冇輸入資料：唔講你偏向任何五行/卦
+      parts.push(`主象：命盤未起，先循「今日運勢」定調，再以「號碼對照」取象`);
     }
   
     // 3) A/B 提示（可選）
@@ -637,7 +696,6 @@
   
     return parts.join("。") + "。";
   }
-
   
   function explainTicket(numsSorted, pack, explainLevel = "standard") {
     if (!pack || !pack.meta) return null;
