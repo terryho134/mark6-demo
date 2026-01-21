@@ -24,6 +24,8 @@
   const toast = el("toast");
   const modeLabel = el("modeLabel");
 
+  const xxGoal = el("xxGoal");
+
   // Advanced 1
   const maxConsec = el("maxConsec");
   const avoidAllOddEven = el("avoidAllOddEven");
@@ -343,6 +345,8 @@
       forbidden: (xxForbidden.value || "").trim(),
       excludeTail4: !!xxExcludeTail4.checked,
       inspiration: (xxInspiration.value || "").trim(),
+
+      goal: (xxGoal && xxGoal.value) || "hit",
 
       engines: {
         wuxing: !!xxEngineWuxing.checked,
@@ -1678,6 +1682,7 @@
     xxStrength, xxExplainLevel,
     xxApplyPlan,
     xxSeedMode, // ✅ seed mode selector
+    xxGoal,
   ].filter(Boolean);
 
   inputs.concat(xuanxueInputs).forEach((x) => x.addEventListener("change", updateSetCountOptions));
