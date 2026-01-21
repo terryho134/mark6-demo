@@ -366,42 +366,180 @@
     const ratioMap = { low: 0.25, medium: 0.35, high: 0.45 };
     const ratio = ratioMap[xuanxue.riskLevel || "medium"] ?? 0.35;
   
-    const goal = xuanxue.goal || "hit";
+    const goal = xuanxue.goal || "hit"; // hit / boom / steady
   
     // 只用上限的一部份（唔填爆）
     let targetSpend = Math.round((baseCap * ratio) / 10) * 10;
     targetSpend = clamp(targetSpend, 60, 280);
   
+    // 用戶輸入「聚焦程度」：DOB / lucky / inspiration 越多越聚
     const hasAnyDob =
       (xuanxue.dobPrecA && xuanxue.dobPrecA !== "NONE" && String(xuanxue.dobA || "").trim()) ||
       (xuanxue.enableB && xuanxue.dobPrecB && xuanxue.dobPrecB !== "NONE" && String(xuanxue.dobB || "").trim());
   
     const luckyCnt = parseNumList(xuanxue.lucky, 6).length;
     const inspCnt = parseNumList(xuanxue.inspiration, 6).length;
-    const focusScore = (hasAnyDob ? 2 : 0) + luckyCnt * 2 + inspCnt;
+    const focusScore = (hasAnyDob ? 2 : 0) + luckyCnt * 2 + inspCnt; // 0..?
   
-    // --- 你指定的出現機會排序（高 → 低） ---
-    // single > multi7 > multi8 > danTuo5膽 > danTuo4膽 > danTuo3膽 > danTuo2膽
-    function baseRankScore(c) {
-      if (c.mode === "single") return 100;
+    // ---------- RNG（每次 Generate 都會變）----------
+    // 用輸入 + 當刻時間做 seed，保證每次按都可出不同買法
+    const seed = (toIntSeed(JSON.stringify({
+      maxBudget: xuanxue.maxBudget,
+      riskLevel: xuanxue.riskLevel,
+      goal,
+      dobA: xuanxue.dobA, dobPrecA: xuanxue.dobPrecA, genderA: xuanxue.genderA,
+      enableB: xuanxue.enableB, dobB: xuanxue.dobB, dobPrecB: xuanxue.dobPrecB, genderB: xuanxue.genderB,
+      lucky: xuanxue.lucky, inspiration: xuanxue.inspiration, forbidden: xuanxue.forbidden,
+      excludeTail4: xuanxue.excludeTail4
+    })) ^ (Date.now() & 0xffffffff)) >>> 0;
+  
+    const rng = mulberry32(seed);
+  
+    function rand() { return rng(); }
+    function randInt(a, b) {
+      a = Math.floor(a); b = Math.floor(b);
+      if (b < a) [a, b] = [b, a];
+      return a + Math.floor(rand() * (b - a + 1));
+    }
+  
+    // ---------- 你指定的「出現機會排序」 ----------
+    // 只要數值由高到低就得；我用 35/22/14/11/8/6/4（比例明顯、又唔會太極端）
+    const ranked = [
+      { plan: { mode: "single" },                 w: 35, reason: "分散落注（單式）" },
+      { plan: { mode: "multi", n: 7 },            w: 22, reason: "聚氣入局（7 碼複式）" },
+      { plan: { mode: "multi", n: 8 },            w: 14, reason: "放大火力（8 碼複式）" },
+      { plan: { mode: "danTuo", d: 5, t: 2 },     w: 11, reason: "鎖膽帶腳（5 膽）" },
+      { plan: { mode: "danTuo", d: 4, t: 3 },     w:  8, reason: "鎖膽帶腳（4 膽）" },
+      { plan: { mode: "danTuo", d: 3, t: 4 },     w:  6, reason: "鎖膽帶腳（3 膽）" },
+      { plan: { mode: "danTuo", d: 2, t: 5 },     w:  4, reason: "鎖膽帶腳（2 膽）" },
+    ];
+  
+    // ---------- 將 ranked 變成「可行候選」 ----------
+    const feasible = [];
+  
+    for (const item of ranked) {
+      const c = { ...item.plan };
+  
+      // 先估每組成本 & 預算內最多可幾組
+      // m = 組數（setCount）
+      // 注意：maxAllowedSets 係你 Level cap（10/5/1）
+      const capM = clamp(Number(maxAllowedSets || 10), 1, 10);
+  
+      let m = 1;
+  
+      if (c.mode === "single") {
+        // 單式：每組 $10
+        const maxM = Math.floor((targetSpend + 10) / 10);
+        // 唔好永遠頂到 10：用隨機落喺 60%–100% 範圍
+        const lo = Math.max(3, Math.floor(maxM * 0.6));
+        const hi = Math.max(3, maxM);
+        m = clamp(randInt(lo, hi), 1, capM);
+        c.m = m;
+      }
   
       if (c.mode === "multi") {
-        if (Number(c.n) === 7) return 85;
-        if (Number(c.n) === 8) return 75;
-        return 60;
+        const per = comb(c.n, 6) * 10; // 7->70, 8->280
+        const maxM = Math.floor((targetSpend + 10) / per);
+        if (maxM <= 0) continue;
+        // 7 碼複式最多建議 2 組；8 碼通常 1 組
+        const hi = c.n === 7 ? Math.min(2, maxM) : 1;
+        m = clamp(randInt(1, hi), 1, capM);
+        c.m = m;
       }
   
       if (c.mode === "danTuo") {
-        const d = Number(c.d);
-        if (d === 5) return 65;
-        if (d === 4) return 55;
-        if (d === 3) return 45;
-        if (d === 2) return 35;
-        return 30;
+        const per = comb(c.t, 6 - c.d) * 10;
+        const maxM = Math.floor((targetSpend + 10) / per);
+        if (maxM <= 0) continue;
+        // 膽拖一般 1–2 組就夠（太多會過份）
+        const hi = Math.min(2, maxM);
+        m = clamp(randInt(1, hi), 1, capM);
+        c.m = m;
       }
   
-      return 0;
+      // 成本 check（唔好超 targetSpend 太多）
+      const cost = costOfPlan(c);
+      if (cost <= 0) continue;
+      if (cost > targetSpend + 10) continue;
+  
+      // ---------- 輕微「目的」修正（唔會鎖死） ----------
+      let w = item.w;
+  
+      if (goal === "hit") {
+        // 求中率：單式稍偏高、8 碼稍偏低
+        if (c.mode === "single") w *= 1.15;
+        if (c.mode === "multi" && c.n === 8) w *= 0.85;
+        if (c.mode === "danTuo") w *= 1.05;
+      } else if (goal === "boom") {
+        // 求爆：複式稍偏高
+        if (c.mode === "multi") w *= 1.20;
+        if (c.mode === "single") w *= 0.90;
+      } else if (goal === "steady") {
+        // 求穩：膽拖稍偏高
+        if (c.mode === "danTuo") w *= 1.20;
+        if (c.mode === "multi" && c.n === 8) w *= 0.90;
+      }
+  
+      // ---------- 輕微「聚焦」修正 ----------
+      // 有命盤/幸運/靈感越多 → 越傾向聚（複式/膽拖）
+      if (focusScore >= 4) {
+        if (c.mode === "single") w *= 0.92;
+        if (c.mode === "multi")  w *= 1.08;
+        if (c.mode === "danTuo") w *= 1.10;
+      } else if (focusScore <= 1) {
+        if (c.mode === "single") w *= 1.05;
+        if (c.mode === "danTuo") w *= 0.95;
+      }
+  
+      feasible.push({
+        ...c,
+        cost,
+        targetSpend,
+        _w: w,
+        _reason: item.reason
+      });
     }
+  
+    // fallback：萬一全部都唔可行（基本上唔會）
+    if (!feasible.length) {
+      const m = clamp(Math.floor(targetSpend / 10), 3, maxAllowedSets || 10);
+      return {
+        mode: "single",
+        m,
+        cost: m * 10,
+        targetSpend,
+        reason: "保守分散：單式（fallback）"
+      };
+    }
+  
+    // ---------- 按權重抽一個（唔再揀最高分） ----------
+    let sumW = 0;
+    for (const f of feasible) sumW += f._w;
+  
+    let r = rand() * sumW;
+    let picked = feasible[0];
+    for (const f of feasible) {
+      r -= f._w;
+      if (r <= 0) { picked = f; break; }
+    }
+  
+    const goalText =
+      goal === "hit" ? "求中率（散）" :
+      goal === "boom" ? "求爆（聚）" :
+      "求穩（守）";
+  
+    return {
+      mode: picked.mode,
+      m: picked.m,
+      n: picked.n,
+      d: picked.d,
+      t: picked.t,
+      cost: picked.cost,
+      targetSpend: picked.targetSpend,
+      reason: `${picked._reason}｜目的：${goalText}`
+    };
+  }
+
   
     // --- Candidates（按你排序優先放，但實際用 baseRankScore 主導） ---
     const candidates = [];
