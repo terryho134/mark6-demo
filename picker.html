@@ -264,15 +264,23 @@
     
       <div class="grid2">
         <div>
-          <label class="check"><input type="checkbox" id="xxAutoPlan" /> 玄學建議買法（Auto Plan）</label>
-          <div class="hint" id="xxAutoPlanHint"></div>
-        </div>
-    
-        <div>
           <label class="check"><input type="checkbox" id="xxWeightedPick" /> 玄學加權取號（四源取號）</label>
           <div class="hint" id="xxWeightedHint"></div>
         </div>
+        <div>
+          <label class="check"><input type="checkbox" id="xxAutoPlan" /> 玄學建議買法（Auto Plan）</label>
+          <div class="hint" id="xxAutoPlanHint"></div>
+        </div>
       </div>
+
+      <label class="row">
+        <span>Auto Plan 目的</span>
+        <select id="xxGoal">
+          <option value="hit">求中率（散）</option>
+          <option value="boom">求爆（聚）</option>
+          <option value="steady">求穩（守）</option>
+        </select>
+      </label>
     
       <div class="subhead">下注上限（只影響建議，不會用盡上限）</div>
       <div class="grid2">
@@ -403,6 +411,15 @@
       </div>
     </section>
 
+    <section class="card">
+      <div class="row">
+        <button id="btnGenerate" class="primary">生成</button>
+        <button id="btnClear" class="ghost">清空結果</button>
+        <span id="toast" class="toast hidden"></span>
+      </div>
+
+      <div class="muted" id="modeLabel"></div>
+    </section>
 
     <section class="card">
       <h2>結果</h2>
