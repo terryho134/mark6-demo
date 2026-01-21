@@ -514,22 +514,77 @@
     return [s1, s2];
   }
   
-  // ✅ 人話版：唔輸出分數，淨講「命中咩」同「點解」
+  function hasMeaningfulProfile(profile) {
+    const dob = profile?.dob || null;
+    const hasMD = !!(dob && Number(dob.month) > 0 && Number(dob.day) > 0);
+    const hasY  = !!(dob && Number(dob.year) > 0);
+    const hasGender = !!(profile && profile.gender && profile.gender !== "unspecified");
+    return { hasMD, hasY, hasGender, hasAny: (hasMD || hasY || hasGender) };
+  }
+  
+  function wuxingName(en) {
+    return en === "water" ? "水" :
+           en === "wood"  ? "木" :
+           en === "fire"  ? "火" :
+           en === "earth" ? "土" : "金";
+  }
+  function trigramName(idx) {
+    const arr = ["乾", "兌", "離", "震", "巽", "坎", "艮", "坤"];
+    return arr[((idx % 8) + 8) % 8];
+  }
+  function zodiacName(idx) {
+    const arr = ["鼠","牛","虎","兔","龍","蛇","馬","羊","猴","雞","狗","豬"];
+    return arr[((idx % 12) + 12) % 12];
+  }
+  
+  // 下面 3 個計算保持你原本規則，只係用嚟「講得清楚」
+  function calcWantedWuxing(profile) {
+    const map = ["water","wood","fire","earth","metal"];
+    const g = profile?.gender || "unspecified";
+    const gCode = g === "male" ? 1 : g === "female" ? 2 : 0;
+    const mm = profile?.dob?.month || 0;
+    const dd = profile?.dob?.day || 0;
+    return map[(mm + dd + gCode) % 5];
+  }
+  function calcGuaIdx(profile) {
+    const mm = profile?.dob?.month || 0;
+    const dd = profile?.dob?.day || 0;
+    const yy = profile?.dob?.year ? (profile.dob.year % 8) : 0;
+    return (dd + mm * 2 + yy) % 8;
+  }
+  function calcStarTargets(profile, daySeed) {
+    const mm = profile?.dob?.month || 0;
+    const dd = profile?.dob?.day || 0;
+    const s1 = ((mm + dd + (daySeed % 9)) % 9) + 1;
+    const s2 = ((dd + (daySeed % 7)) % 9) + 1;
+    return [s1, s2];
+  }
+  
   function explainTicket(numsSorted, pack, explainLevel = "standard") {
     if (!pack || !pack.meta) return null;
+  
     const ctx = pack.ctx || {};
     const pA = ctx.pA || null;
     const pB = ctx.pB || null;
     const daySeed = ctx.daySeed || 0;
     const eng = ctx.engines || { wuxing:true, gua:true, star9:true, zodiac:true };
   
-    // 用 A 為主解釋（B 有開就講「綜合 A/B」但唔深入）
-    const profileForExplain = pA || pB || { dob:null, gender:"unspecified" };
+    // 以 A 為主；有 B 就加一句「綜合A/B」
+    const profile = pA || pB || { dob:null, gender:"unspecified" };
     const hasB = !!pB;
   
-    const wantedWux = calcWantedWuxing(profileForExplain); // "water"...
-    const wantedGua = calcGuaIdx(profileForExplain);       // 0..7
-    const wantedStars = calcStarTargets(profileForExplain, daySeed); // [1..9, 1..9]
+    // ✅ 自己判斷有冇真‧資料（避免冇輸入都講「你偏向xx」）
+    const dob = profile?.dob || null;
+    const hasGender = !!(profile?.gender && profile.gender !== "unspecified");
+    const hasY = !!(dob && Number.isInteger(dob.year));
+    const hasMD = !!(dob && Number.isInteger(dob.month) && Number.isInteger(dob.day));
+    const hasAny = hasGender || hasY || hasMD;
+    
+    const info = { hasAny, hasMD, hasY };
+
+    const wantedWux = calcWantedWuxing(profile);
+    const wantedGua = calcGuaIdx(profile);
+    const wantedStars = calcStarTargets(profile, daySeed);
   
     const lines = [];
   
@@ -538,78 +593,96 @@
       if (!m) continue;
   
       const tags = m.tags || [];
+      const bd = m.breakdown || {};
+  
+      const hitWux  = eng.wuxing && (bd.wuxing  || 0) >= 0.8;
+      const hitGua  = eng.gua    && (bd.gua     || 0) >= 0.8;
+      const hitStar = eng.star9  && (bd.star9   || 0) >= 0.8;
+      const hitZod  = eng.zodiac && (bd.zodiac  || 0) >= 0.8;
+  
       const hits = [];
       const reasons = [];
   
-      // lucky / inspiration（以「你輸入」角度）
+      // 幸運/靈感（最人話，先講）
       if (tags.includes("lucky")) {
         hits.push("幸運號碼");
-        reasons.push("屬於你輸入的幸運號碼");
+        reasons.push("因為呢個號碼係你自己輸入嘅「幸運號碼」");
       }
       if (tags.includes("inspiration")) {
         hits.push("靈感號碼");
-        reasons.push("屬於你輸入的靈感號碼");
+        reasons.push("因為呢個號碼係你自己輸入嘅「靈感號碼」");
       }
   
-      // 四源命中判斷：沿用你現有 threshold（>=0.8）
-      const bd = m.breakdown || {};
-      const hitWux   = eng.wuxing && (bd.wuxing  || 0) >= 0.8;
-      const hitGua   = eng.gua    && (bd.gua     || 0) >= 0.8;
-      const hitStar  = eng.star9  && (bd.star9   || 0) >= 0.8;
-      const hitZod   = eng.zodiac && (bd.zodiac  || 0) >= 0.8;
-  
+      // 五行：改成「有資料先講偏向；冇資料就講對照」
       if (hitWux) {
         const map = ["water","wood","fire","earth","metal"];
         const elem = map[n % 5];
         hits.push("五行");
-        reasons.push(`你資料推算偏向「${wuxingName(wantedWux)}」，而 ${String(n).padStart(2,"0")} 對應「${wuxingName(elem)}」`);
-      }
   
-      if (hitGua) {
-        const idx = n % 8;
-        hits.push("易卦");
-        reasons.push(`你資料推算的卦象偏向「${trigramName(wantedGua)}」，而 ${String(n).padStart(2,"0")}（取餘數）落在「${trigramName(idx)}」`);
-      }
-  
-      if (hitStar) {
-        const star = (n % 9) + 1;
-        hits.push("九宮");
-        reasons.push(`今日推算的幸運星位包括「${wantedStars[0]}」或「${wantedStars[1]}」，而 ${String(n).padStart(2,"0")} 對應星位「${star}」`);
-      }
-  
-      if (eng.zodiac) {
-        // 生肖：如果冇年份，你現有 scoreZodiac 會回 0.35（即唔會 >=0.8）
-        // 所以命中只會喺有年份先出現；但我仍然提供「未提供年份」的人話提示
-        const yy = profileForExplain?.dob?.year;
-        if (!yy) {
-          if (explainLevel === "detailed") {
-            reasons.push("生肖需要出生年份；未提供年份，所以此項只作參考，不作命中判斷");
-          }
-        } else if (hitZod) {
-          const idx = (yy - 4) % 12;
-          const r = n % 12;
-          hits.push("生肖");
-          reasons.push(`以你輸入出生年推算生肖為「${zodiacName(idx)}」（民俗算法），而 ${String(n).padStart(2,"0")} 對應位亦落在「${zodiacName(r)}」`);
+        if (info.hasAny) {
+          reasons.push(`按你提供嘅資料推演，主氣落在「${wuxingName(wantedWux)}」，而 ${nTxt} 對照屬「${wuxingName(elem)}」`);
+        } else {
+          reasons.push(`你未輸入生日/性別，所以五行只作「號碼對照」：${String(n).padStart(2,"0")} 屬「${wuxingName(elem)}」`);
         }
       }
   
-      // 組句（唔用分數）
+      // 易卦：同樣處理（有資料先講你偏向邊卦）
+      if (hitGua) {
+        const idx = n % 8;
+        hits.push("易卦");
+  
+        if (info.hasAny) {
+          reasons.push(`按你提供嘅資料推演，卦象主調為「${trigramName(wantedGua)}」，而 ${nTxt} 對照落在「${trigramName(idx)}」`);
+        } else {
+          reasons.push(`你未輸入生日資料，所以易卦只作「號碼對照」：${String(n).padStart(2,"0")} 對照為「${trigramName(idx)}」`);
+        }
+      }
+  
+      // 九宮：就算冇生日，仍可以用「今日運勢」講（更合理）
+      if (hitStar) {
+        const star = (n % 9) + 1;
+        hits.push("九宮");
+  
+        if (info.hasMD) {
+          reasons.push(`按你生日（日/月）加上「今日運勢」推算，今日有利星位包括「${wantedStars[0]} / ${wantedStars[1]}」，而 ${String(n).padStart(2,"0")} 對應星位「${star}」`);
+        } else {
+          reasons.push(`你未輸入生日（日/月），九宮改用「今日運勢」推算：今日有利星位「${wantedStars[0]} / ${wantedStars[1]}」，而 ${String(n).padStart(2,"0")} 對應星位「${star}」`);
+        }
+      }
+  
+      // 生肖：需要年份，冇就唔講命中（你原本其實都唔會命中）
+      if (eng.zodiac) {
+        const yy = profile?.dob?.year;
+        if (yy && hitZod) {
+          const idx = (yy - 4) % 12;
+          const r = n % 12;
+          hits.push("生肖");
+          reasons.push(`按你輸入出生年（民俗算法）推算生肖為「${zodiacName(idx)}」，而 ${String(n).padStart(2,"0")} 對照亦落在「${zodiacName(r)}」`);
+        } else if (!yy && explainLevel === "detailed") {
+          // detailed 才提一次，唔好煩
+          reasons.push("生肖需要出生年份；你未提供年份，所以呢項唔作命中判斷");
+        }
+      }
+  
       const nTxt = String(n).padStart(2, "0");
   
       if (!hits.length) {
-        // ✅ 無命中：一句就夠（避免用分數）
-        lines.push(`${nTxt}：未見明顯命中特徵（偏隨機取號）`);
+        if (explainLevel === "compact") {
+          lines.push(`${nTxt}：藏象（留白位）`);
+        } else {
+          lines.push(`${nTxt}：藏象（留白位）｜此號唔屬於你而家設定嘅主象落點，但可作「暗線」去平衡整體氣勢`);
+        }
         continue;
       }
   
-      // ✅ 有命中：列出命中項
-      const hitTxt = `命中：${hits.join("、")}${hasB ? "（綜合A/B）" : ""}`;
+      const hitTxt = `對應：${hits.join("、")}${hasB ? "（綜合A/B）" : ""}`;
   
       if (explainLevel === "compact") {
         lines.push(`${nTxt}：${hitTxt}`);
       } else {
-        // standard / detailed：加簡短原因（每粒最多 1–2 句，避免太長）
-        const why = reasons.slice(0, explainLevel === "detailed" ? 3 : 2).join("；");
+        // 更人話：原因最多 1–2 句（detailed 先多一句）
+        const maxWhy = explainLevel === "detailed" ? 3 : 2;
+        const why = reasons.slice(0, maxWhy).join("；");
         lines.push(`${nTxt}：${hitTxt}｜原因：${why}`);
       }
     }
