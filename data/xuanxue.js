@@ -366,6 +366,8 @@
     const ratioMap = { low: 0.25, medium: 0.35, high: 0.45 };
     const ratio = ratioMap[xuanxue.riskLevel || "medium"] ?? 0.35;
 
+    const goal = xuanxue.goal || "hit";
+
     // 只用上限的一部份（唔填爆）
     let targetSpend = Math.round((baseCap * ratio) / 10) * 10;
     targetSpend = clamp(targetSpend, 60, 280);
@@ -406,6 +408,8 @@
       if (cost2 <= 0) continue;
 
       let pref = 0;
+      
+      // 原本 focusScore 的邏輯保留
       if (focusScore >= 4) {
         if (c.mode === "multi") pref += 2.0;
         if (c.mode === "danTuo") pref += 1.0;
@@ -415,6 +419,27 @@
       } else {
         if (c.mode === "single") pref += 1.2;
       }
+      
+      // ✅ 新增：按「目的」再推一推（簡單粗暴但有效）
+      if (goal === "hit") {
+        if (c.mode === "single") pref += 2.0;
+        if (c.mode === "danTuo") pref += 0.8;
+        if (c.mode === "multi")  pref -= 0.3;
+      }
+      
+      if (goal === "boom") {
+        if (c.mode === "multi")  pref += 2.0;
+        if (c.mode === "danTuo") pref += 1.2;
+        if (c.mode === "single") pref -= 0.4;
+      }
+      
+      if (goal === "steady") {
+        if (c.mode === "danTuo") pref += 2.0;
+        if (c.mode === "single") pref += 0.6;
+        if (c.mode === "multi")  pref -= 0.2;
+        if (c.mode === "full5dan") pref += 0.8; // 若你有推 full5dan
+      }
+
 
       const closeness = -Math.abs(targetSpend - cost2) / 40;
       const score = pref + closeness;
@@ -429,6 +454,12 @@
       targetSpend,
       reason:"保守分散：多注單式"
     };
+
+    const goalText = goal === "hit" ? "求中率（散）"
+      : goal === "boom" ? "求爆（聚）"
+      : "求穩（守）";
+    
+    best.reason = `${best.reason || ""}｜目的：${goalText}`;
 
     return best;
   }
