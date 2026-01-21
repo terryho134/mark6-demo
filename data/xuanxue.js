@@ -1001,5 +1001,4 @@
 
     PRICE_PER_BET,
   };
-  console.log("[XX] Xuanxue ready", window.Xuanxue);
 })();
