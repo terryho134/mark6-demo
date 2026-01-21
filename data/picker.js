@@ -1528,6 +1528,11 @@
       runtimeXX.seedMode = "click";
       runtimeXX.seedFinal = null;
 
+      console.log("[XX] window.Xuanxue?", !!window.Xuanxue);
+      console.log("[XX] xxAutoPlan element?", !!document.getElementById("xxAutoPlan"));
+      console.log("[XX] state:", getXuanxueState());
+
+
       const xx = getXuanxueState();
       if (xx && xx.enabled) {
         runtimeXX.enabled = true;
