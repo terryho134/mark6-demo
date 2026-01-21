@@ -587,6 +587,9 @@
     const wantedStars = calcStarTargets(profile, daySeed);
   
     const lines = [];
+
+    const FALLBACK_LINE =
+      "隨緣位（藏象）｜此號未落入你而家設定嘅主象，但可作暗線，拉平整體氣勢";
   
     for (const n of numsSorted) {
       const m = pack.meta[n];
@@ -667,15 +670,11 @@
       const nTxt = String(n).padStart(2, "0");
   
       if (!hits.length) {
-        if (explainLevel === "compact") {
-          lines.push(`${nTxt}：藏象（留白位）`);
-        } else {
-          lines.push(`${nTxt}：藏象（留白位）｜此號唔屬於你而家設定嘅主象落點，但可作「暗線」去平衡整體氣勢`);
-        }
+        lines.push(`${nTxt}：${FALLBACK_LINE}`);
         continue;
       }
   
-      const hitTxt = `對應：${hits.join("、")}${hasB ? "（綜合A/B）" : ""}`;
+      const hitTxt = `對應象：${hits.join("、")}${hasB ? "（綜合A/B）" : ""}`;
   
       if (explainLevel === "compact") {
         lines.push(`${nTxt}：${hitTxt}`);
@@ -683,7 +682,7 @@
         // 更人話：原因最多 1–2 句（detailed 先多一句）
         const maxWhy = explainLevel === "detailed" ? 3 : 2;
         const why = reasons.slice(0, maxWhy).join("；");
-        lines.push(`${nTxt}：${hitTxt}｜原因：${why}`);
+        lines.push(`${nTxt}：${hitTxt}｜解讀：${why}`);
       }
     }
   
