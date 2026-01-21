@@ -1176,7 +1176,7 @@
     result.appendChild(head);
 
     // ---- Xuanxue header ----
-    if (runtimeXX.enabled) {
+     {
       const xxHead = document.createElement("div");
       xxHead.className = "muted";
       xxHead.style.marginTop = "6px";
@@ -1202,11 +1202,15 @@
         ? `取號種子：${seedModeLabel(runtimeXX.seedMode)}`
         : "";
 
+       const opening = (runtimeXX.pack && window.Xuanxue && window.Xuanxue.openingReading)
+        ? window.Xuanxue.openingReading(runtimeXX.pack)
+        : "";
+
       xxHead.innerHTML =
         `<b>玄學提示</b><br>` +
+        (opening ? `<span>${opening}</span><br>` : "") +
         `${planText}<br>` +
-        `${runtimeXX.weightedPick ? "取號：已啟用四源加權（五行/易卦/九宮/生肖）" : "取號：未啟用四源加權（保持隨機）"}<br>` +
-        `${seedText ? (seedText + "<br>") : ""}` +
+        `${runtimeXX.weightedPick ? "取號：已啟用四源取象（五行/易卦/九宮/生肖）" : "取號：未啟用四源取象（保持隨機）"}<br>` +
         `${luckText}`;
 
       result.appendChild(xxHead);
