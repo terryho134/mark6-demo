@@ -429,13 +429,15 @@
       let m = 1;
   
       if (c.mode === "single") {
-        // 單式：每組 $10
         const maxM = Math.floor((targetSpend + 10) / 10);
-        // 唔好永遠頂到 10：用隨機落喺 60%–100% 範圍
-        const lo = Math.max(3, Math.floor(maxM * 0.6));
-        const hi = Math.max(3, maxM);
-        m = clamp(randInt(lo, hi), 1, capM);
-        c.m = m;
+      
+        // ✅ 上限先受 capM 影響
+        const hi = clamp(maxM, 3, capM);
+      
+        // ✅ 低位用 hi 計，確保唔會出現 lo > hi
+        const lo = clamp(Math.floor(hi * 0.6), 3, hi);
+      
+        c.m = randInt(lo, hi);
       }
   
       if (c.mode === "multi") {
