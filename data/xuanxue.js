@@ -770,6 +770,7 @@
     // ✅ new exports
     deriveSeed,
     reseedPack,
+    openingReading,
     explainTicket,
 
     PRICE_PER_BET,
