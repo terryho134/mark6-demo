@@ -541,127 +541,6 @@
     };
   }
 
-  
-    // --- Candidates（按你排序優先放，但實際用 baseRankScore 主導） ---
-    const candidates = [];
-  
-    // 1) 單式（最常見）
-    candidates.push({
-      mode: "single",
-      m: clamp(Math.floor(targetSpend / 10), 3, 10),
-      reason: "分散氣勢：以多注單式為主"
-    });
-  
-    // 2) 7碼複式
-    candidates.push({
-      mode: "multi",
-      n: 7,
-      m: clamp(Math.floor(targetSpend / 70) || 1, 1, 2),
-      reason: "聚氣：以7碼複式集中主題"
-    });
-  
-    // 3) 8碼複式（較罕見）
-    if (xuanxue.riskLevel === "high" && targetSpend >= 280) {
-      candidates.push({
-        mode: "multi",
-        n: 8,
-        m: 1,
-        reason: "進取聚焦：8碼複式（成本較高）"
-      });
-    } else {
-      // 即使非 high，都可以擺入候選，但會較少中選（因 baseRank + cost）
-      candidates.push({
-        mode: "multi",
-        n: 8,
-        m: 1,
-        reason: "加一手聚焦：8碼複式（視乎預算）"
-      });
-    }
-  
-    // 4-7) 膽拖（你要：腳全餐只解釋膽，所以以「全拖」作候選）
-    // 5膽：5膽 + 44拖；4膽：4膽 + 45拖；3膽：3膽 + 46拖；2膽：2膽 + 47拖
-    candidates.push({ mode: "danTuo", d: 5, t: 44, m: 1, reason: "以膽主氣：5膽全拖（守中帶攻）" });
-    candidates.push({ mode: "danTuo", d: 4, t: 45, m: 1, reason: "以膽主氣：4膽全拖（穩）" });
-    candidates.push({ mode: "danTuo", d: 3, t: 46, m: 1, reason: "以膽主氣：3膽全拖（中位）" });
-    candidates.push({ mode: "danTuo", d: 2, t: 47, m: 1, reason: "以膽主氣：2膽全拖（入門）" });
-  
-    let best = null;
-    let bestScore = -Infinity;
-  
-    for (const c of candidates) {
-      c.m = clamp(c.m || 1, 1, 10);
-  
-      const cost = costOfPlan(c);
-      // 太貴就直接跳過（比 targetSpend 多太多）
-      if (cost > targetSpend + 10) continue;
-  
-      // 受 level cap 影響（例如 Level 2 最多5組；Level3最多1組）
-      c.m = clamp(c.m, 1, maxAllowedSets || 10);
-  
-      const cost2 = costOfPlan(c);
-      if (cost2 <= 0) continue;
-  
-      // --- 核心：用 baseRankScore 做「出現機會」主導 ---
-      let pref = baseRankScore(c);
-  
-      // --- focusScore：只作輕微微調（唔推翻排序） ---
-      if (focusScore >= 4) {
-        if (c.mode === "multi") pref += 0.8;
-        if (c.mode === "danTuo") pref += 0.4;
-      } else if (focusScore >= 2) {
-        if (c.mode === "danTuo") pref += 0.6;
-        if (c.mode === "multi") pref += 0.3;
-      } else {
-        if (c.mode === "single") pref += 0.5;
-      }
-  
-      // --- goal：同樣只作輕微微調（唔用「加分」概念都無所謂，呢度係內部計算） ---
-      if (goal === "hit") {
-        if (c.mode === "single") pref += 0.8;
-        if (c.mode === "multi") pref += 0.2;
-        if (c.mode === "danTuo") pref -= 0.1;
-      } else if (goal === "boom") {
-        if (c.mode === "multi") pref += 0.8;
-        if (c.mode === "danTuo") pref += 0.2;
-        if (c.mode === "single") pref -= 0.1;
-      } else if (goal === "steady") {
-        if (c.mode === "danTuo") pref += 0.6;
-        if (c.mode === "single") pref += 0.2;
-      }
-  
-      // --- closeness：縮細，避免金額差距推翻排序 ---
-      const closeness = -Math.abs(targetSpend - cost2) / 120;
-  
-      const score = pref + closeness;
-  
-      if (score > bestScore) {
-        bestScore = score;
-        best = { ...c, cost: cost2, targetSpend };
-      }
-    }
-  
-    // fallback
-    if (!best) {
-      best = {
-        mode: "single",
-        m: clamp(Math.floor(targetSpend / 10), 3, maxAllowedSets || 10),
-        cost: clamp(Math.floor(targetSpend / 10), 3, 10) * 10,
-        targetSpend,
-        reason: "保守分散：多注單式"
-      };
-    }
-  
-    const goalText =
-      goal === "hit" ? "求中率（散）" :
-      goal === "boom" ? "求爆（聚）" :
-      "求穩（守）";
-  
-    best.reason = `${best.reason || ""}｜目的：${goalText}`;
-  
-    return best;
-  }
-
-
   function recommendLuckContext(seed) {
     const dirs = ["東", "東南", "南", "西南", "西", "西北", "北", "東北"];
     const dir = dirs[seed % dirs.length];
@@ -698,49 +577,6 @@
     }
 
     return { luckyHit, inspirationHit, forbiddenHit, wux, gua, star, zod };
-  }
-
-  function wuxingName(en) {
-    return en === "water" ? "水" :
-           en === "wood"  ? "木" :
-           en === "fire"  ? "火" :
-           en === "earth" ? "土" : "金";
-  }
-  
-  function trigramName(idx) {
-    // 8卦：0..7（純命名用，唔宣稱傳統對應）
-    const arr = ["乾", "兌", "離", "震", "巽", "坎", "艮", "坤"];
-    return arr[((idx % 8) + 8) % 8];
-  }
-  
-  function zodiacName(idx) {
-    // 以你現有 (yy-4)%12 算法：0 對應「鼠」係常見寫法
-    const arr = ["鼠","牛","虎","兔","龍","蛇","馬","羊","猴","雞","狗","豬"];
-    return arr[((idx % 12) + 12) % 12];
-  }
-  
-  function calcWantedWuxing(profile) {
-    const map = ["water","wood","fire","earth","metal"];
-    const g = profile?.gender || "unspecified";
-    const gCode = g === "male" ? 1 : g === "female" ? 2 : 0;
-    const mm = profile?.dob?.month || 0;
-    const dd = profile?.dob?.day || 0;
-    return map[(mm + dd + gCode) % 5];
-  }
-  
-  function calcGuaIdx(profile) {
-    const mm = profile?.dob?.month || 0;
-    const dd = profile?.dob?.day || 0;
-    const yy = profile?.dob?.year ? (profile.dob.year % 8) : 0;
-    return (dd + mm * 2 + yy) % 8;
-  }
-  
-  function calcStarTargets(profile, daySeed) {
-    const mm = profile?.dob?.month || 0;
-    const dd = profile?.dob?.day || 0;
-    const s1 = ((mm + dd + (daySeed % 9)) % 9) + 1;
-    const s2 = ((dd + (daySeed % 7)) % 9) + 1;
-    return [s1, s2];
   }
   
   function hasMeaningfulProfile(profile) {
@@ -888,6 +724,7 @@
 
   
     for (const n of numsSorted) {
+      const nTxt = String(n).padStart(2, "0"); // ✅ 提前放呢度
       const m = pack.meta[n];
       if (!m) continue;
   
@@ -962,8 +799,6 @@
           reasons.push("生肖需要出生年份；你未提供年份，所以呢項唔作命中判斷");
         }
       }
-  
-      const nTxt = String(n).padStart(2, "0");
   
       if (!hits.length) {
         lines.push(`${nTxt}：${pickFallbackLine(n)}`);
