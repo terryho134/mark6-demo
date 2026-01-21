@@ -296,6 +296,7 @@
       forbiddenSet,
       lucky,
       inspiration,
+      ctx,
       notes: {
         zodiacIsFolklore: true
       },
@@ -559,6 +560,54 @@
     const s2 = ((dd + (daySeed % 7)) % 9) + 1;
     return [s1, s2];
   }
+
+  function openingReading(pack) {
+    if (!pack || !pack.ctx) return "";
+  
+    const ctx = pack.ctx || {};
+    const pA = ctx.pA || null;
+    const pB = ctx.pB || null;
+    const daySeed = ctx.daySeed || 0;
+    const eng = ctx.engines || { wuxing:true, gua:true, star9:true, zodiac:true };
+  
+    // 用 A 為主
+    const profile = pA || pB || { dob:null, gender:"unspecified" };
+    const info = hasMeaningfulProfile(profile);
+  
+    // 今日運勢（九宮 target）
+    const wantedStars = calcStarTargets(profile, daySeed);
+  
+    // 五行 / 卦（有資料先講偏向）
+    const wantedWux = info.hasAny ? calcWantedWuxing(profile) : null;
+    const wantedGua = info.hasAny ? calcGuaIdx(profile) : null;
+  
+    const parts = [];
+  
+    // 1) 今日運勢（你已統一叫今日運勢）
+    if (eng.star9) {
+      parts.push(`今日運勢走勢偏向九宮「${wantedStars[0]} / ${wantedStars[1]}」`);
+    } else {
+      parts.push(`今日運勢以「隨機流轉」為主`);
+    }
+  
+    // 2) 主象（有資料先講）
+    const main = [];
+    if (eng.wuxing && wantedWux) main.push(`五行偏「${wuxingName(wantedWux)}」`);
+    if (eng.gua && wantedGua !== null) main.push(`卦象偏「${trigramName(wantedGua)}」`);
+  
+    if (main.length) {
+      parts.push(`主象：${main.join("，")}`);
+    } else {
+      // 冇輸入資料就唔好「推算你偏向水」：改做「只作號碼對照/運勢」
+      parts.push(`主象：未立個人命盤，先以「今日運勢＋號碼對照」行`);
+    }
+  
+    // 3) A/B 提示（可選）
+    if (pB) parts.push(`此批為 A/B 綜合取象`);
+  
+    return parts.join("。") + "。";
+  }
+
   
   function explainTicket(numsSorted, pack, explainLevel = "standard") {
     if (!pack || !pack.meta) return null;
