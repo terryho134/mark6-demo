@@ -296,7 +296,6 @@
       forbiddenSet,
       lucky,
       inspiration,
-      ctx,
       notes: {
         zodiacIsFolklore: true
       },
