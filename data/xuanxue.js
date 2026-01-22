@@ -746,18 +746,29 @@
       "隨緣位（藏象）｜主象未落，藏象先行；用呢粒做緩衝，局勢更圓",
     ];
 
-    // 用 seed + 號碼去揀句：同一日/同一套設定會固定，唔會亂飄
-    function pickFallbackLine(n) {
-      const base =
-        ((pack && pack.seed) ? pack.seed : 0) ^
-        ((ctx && ctx.daySeed) ? ctx.daySeed : 0);
+    const FALLBACK_TAILS = [
+      "（托底）",
+      "（暗線）",
+      "（留白）",
+      "（守勢）",
+      "（補氣）",
+      "（緩衝）",
+    ];
+
+    const baseSeed =
+      ((pack && pack.seed) ? pack.seed : 0) ^
+      ((ctx && ctx.daySeed) ? ctx.daySeed : 0);
     
-      // 令每粒號碼都可能揀到唔同句，但仍然 deterministic
-      const idx = ((base + n * 1315423911) >>> 0) % FALLBACK_VARIANTS.length;
-      return FALLBACK_VARIANTS[idx];
+    // ✅ 同一張飛固定一句「主句式」
+    const ticketFallbackIdx = (baseSeed >>> 0) % FALLBACK_VARIANTS.length;
+    const ticketFallbackLine = FALLBACK_VARIANTS[ticketFallbackIdx];
+
+    function pickFallbackTail(n) {
+      // 用 baseSeed + 號碼，令同一張飛每粒尾詞可以唔同，但仍 deterministic
+      const idx = ((baseSeed + n * 97) >>> 0) % FALLBACK_TAILS.length;
+      return FALLBACK_TAILS[idx];
     }
 
-  
     for (const n of numsSorted) {
       const nTxt = String(n).padStart(2, "0"); // ✅ 提前放呢度
       const m = pack.meta[n];
@@ -836,7 +847,7 @@
       }
   
       if (!hits.length) {
-        lines.push(`${nTxt}：${pickFallbackLine(n)}`);
+        lines.push(`${nTxt}：${ticketFallbackLine}${pickFallbackTail(n)}`);
         continue;
       }
   
